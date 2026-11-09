@@ -1,0 +1,10 @@
+python packages I installed on windows venv:
+
+# 1. Ensure build tooling is up to date
+python -m pip install --upgrade pip setuptools wheel
+
+# 2. Core dependencies with pre-compiled ARM64 wheels
+pip install numpy pillow pandas onnxruntime
+
+# 3. Web UI framework
+pip install gradio
