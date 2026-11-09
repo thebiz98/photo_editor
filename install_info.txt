@@ -1,10 +1,20 @@
-python packages I installed on windows venv:
+# Windows on ARM (ARM64) Installation Log & Commands
 
-# 1. Ensure build tooling is up to date
-python -m pip install --upgrade pip setuptools wheel
+## Environment
+- OS: Windows 11 ARM64
+- Python: 3.12 (ARM64) in .\venv\
+- Smart App Control: Enabled (Compliant - no unsigned web server C-extensions)
 
-# 2. Core dependencies with pre-compiled ARM64 wheels
-pip install numpy pillow pandas onnxruntime
+## Command History
 
-# 3. Web UI framework
-pip install gradio
+### 1. Base tooling update (Windows venv)
+.\venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+
+### 2. Core ARM64 Image & ML Dependencies (Already Installed & Verified)
+.\venv\Scripts\python.exe -m pip install numpy pillow onnxruntime huggingface_hub
+
+### 3. Native GUI Framework (Path 1 - Qt6)
+.\venv\Scripts\python.exe -m pip install PySide6
+
+### 4. Legacy Web Stack (NOTE: Caused Smart App Control block due to orjson, now retired to ./wsl)
+# .\venv\Scripts\python.exe -m pip install gradio
