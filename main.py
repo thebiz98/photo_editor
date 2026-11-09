@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QFileDialog, QColorDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
-    QGraphicsItem, QFrame, QStatusBar, QSizePolicy, QAbstractItemView
+    QGraphicsItem, QFrame, QStatusBar, QSizePolicy, QAbstractItemView,
+    QScrollArea, QGridLayout
 )
 from PIL import Image
 
@@ -420,12 +421,18 @@ class PhotoStudioApp(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(splitter)
 
-        # 1. Left Panel (Workspace & ROI Mode)
+        # 1. Left Panel (Workspace & ROI Mode) - wrapped in QScrollArea
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        left_scroll.setFixedWidth(290)
+
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(4, 4, 4, 4)
-        left_layout.setSpacing(6)
-        left_panel.setFixedWidth(280)
+        left_layout.setContentsMargins(4, 4, 8, 4)
+        left_layout.setSpacing(8)
 
         # Photo list group
         grp_workspace = QGroupBox("📁 Photo Workspace")
@@ -443,6 +450,7 @@ class PhotoStudioApp(QMainWindow):
 
         self.list_photos = QListWidget()
         self.list_photos.setIconSize(QSize(48, 48))
+        self.list_photos.setMinimumHeight(150)
         self.list_photos.currentRowChanged.connect(self._on_photo_selected)
         grp_workspace_layout.addWidget(self.list_photos)
 
@@ -486,30 +494,43 @@ class PhotoStudioApp(QMainWindow):
         self.combo_presets.currentTextChanged.connect(self._on_preset_changed)
         grp_preset_layout.addWidget(self.combo_presets)
 
-        custom_row = QHBoxLayout()
-        custom_row.addWidget(QLabel("W (mm):"))
+        custom_grid = QGridLayout()
+        custom_grid.setContentsMargins(0, 4, 0, 0)
+        custom_grid.setSpacing(6)
+
+        lbl_w = QLabel("Width (mm):")
         self.spin_custom_w = QDoubleSpinBox()
         self.spin_custom_w.setRange(5.0, 300.0)
         self.spin_custom_w.setValue(35.0)
         self.spin_custom_w.setSingleStep(1.0)
+        self.spin_custom_w.setDecimals(1)
+        self.spin_custom_w.setSuffix(" mm")
+        self.spin_custom_w.setMinimumWidth(100)
         self.spin_custom_w.setEnabled(False)
         self.spin_custom_w.valueChanged.connect(lambda _: self._trigger_render())
-        custom_row.addWidget(self.spin_custom_w)
 
-        custom_row.addWidget(QLabel("H (mm):"))
+        lbl_h = QLabel("Height (mm):")
         self.spin_custom_h = QDoubleSpinBox()
         self.spin_custom_h.setRange(5.0, 300.0)
         self.spin_custom_h.setValue(45.0)
         self.spin_custom_h.setSingleStep(1.0)
+        self.spin_custom_h.setDecimals(1)
+        self.spin_custom_h.setSuffix(" mm")
+        self.spin_custom_h.setMinimumWidth(100)
         self.spin_custom_h.setEnabled(False)
         self.spin_custom_h.valueChanged.connect(lambda _: self._trigger_render())
-        custom_row.addWidget(self.spin_custom_h)
 
-        grp_preset_layout.addLayout(custom_row)
+        custom_grid.addWidget(lbl_w, 0, 0)
+        custom_grid.addWidget(self.spin_custom_w, 0, 1)
+        custom_grid.addWidget(lbl_h, 1, 0)
+        custom_grid.addWidget(self.spin_custom_h, 1, 1)
+
+        grp_preset_layout.addLayout(custom_grid)
         left_layout.addWidget(grp_preset)
         left_layout.addStretch()
 
-        splitter.addWidget(left_panel)
+        left_scroll.setWidget(left_panel)
+        splitter.addWidget(left_scroll)
 
         # 2. Center Panel (Interactive Canvas + Top Toolbar)
         center_panel = QWidget()
@@ -517,20 +538,32 @@ class PhotoStudioApp(QMainWindow):
         center_layout.setContentsMargins(4, 4, 4, 4)
         center_layout.setSpacing(6)
 
-        # Toolbar
+        # Top Toolbar - clean, non-clipped labels with full tooltips
         toolbar = QHBoxLayout()
-        self.btn_zoom_in = QPushButton("🔍+ Zoom In")
+        toolbar.setSpacing(6)
+
+        self.btn_zoom_in = QPushButton("🔍+ In")
+        self.btn_zoom_in.setToolTip("Zoom In (Mouse Wheel Up)")
         self.btn_zoom_in.clicked.connect(lambda: self.canvas.zoom(1.2))
-        self.btn_zoom_out = QPushButton("🔍- Zoom Out")
+
+        self.btn_zoom_out = QPushButton("🔍- Out")
+        self.btn_zoom_out.setToolTip("Zoom Out (Mouse Wheel Down)")
         self.btn_zoom_out.clicked.connect(lambda: self.canvas.zoom(1 / 1.2))
-        self.btn_fit = QPushButton("📐 Fit to Window")
+
+        self.btn_fit = QPushButton("📐 Fit")
+        self.btn_fit.setToolTip("Fit Image to Window")
         self.btn_fit.clicked.connect(lambda: self.canvas.fit_image())
-        self.btn_rotate = QPushButton("🔄 Rotate 90° CW")
+
+        self.btn_rotate = QPushButton("🔄 Rotate")
+        self.btn_rotate.setToolTip("Rotate 90° Clockwise")
         self.btn_rotate.clicked.connect(self._on_rotate_90)
-        self.btn_reset_roi = QPushButton("⬜ Reset Box")
+
+        self.btn_reset_roi = QPushButton("⬜ Reset")
+        self.btn_reset_roi.setToolTip("Reset / Clear Selection Box")
         self.btn_reset_roi.clicked.connect(self._on_reset_roi)
 
-        self.btn_compare = QPushButton("👁️ Hold to Compare Original")
+        self.btn_compare = QPushButton("👁️ Original")
+        self.btn_compare.setToolTip("Hold to Compare Original (Unedited) Photo")
         self.btn_compare.pressed.connect(self._on_compare_pressed)
         self.btn_compare.released.connect(self._on_compare_released)
 
@@ -551,12 +584,18 @@ class PhotoStudioApp(QMainWindow):
 
         splitter.addWidget(center_panel)
 
-        # 3. Right Panel (AI Segmentation & Lighting)
+        # 3. Right Panel (AI Segmentation & Lighting) - wrapped in QScrollArea
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        right_scroll.setFixedWidth(330)
+
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setContentsMargins(4, 4, 8, 4)
         right_layout.setSpacing(6)
-        right_panel.setFixedWidth(320)
 
         # AI Background Group
         grp_ai = QGroupBox("🤖 AI Background Removal")
@@ -588,6 +627,7 @@ class PhotoStudioApp(QMainWindow):
         grp_ai_layout.addLayout(backdrop_row)
 
         self.btn_pick_color = QPushButton("🎨 Pick Custom Color")
+        self.btn_pick_color.setObjectName("btn_pick_color")
         self.btn_pick_color.setEnabled(False)
         self.btn_pick_color.clicked.connect(self._on_pick_custom_color)
         grp_ai_layout.addWidget(self.btn_pick_color)
@@ -619,8 +659,8 @@ class PhotoStudioApp(QMainWindow):
 
         right_layout.addWidget(grp_ai)
 
-        # Lighting & Color Adjustments Group
-        grp_lighting = QGroupBox("☀️ Lighting & Color Grading")
+        # Lighting & Color Adjustments Group - escaped ampersand
+        grp_lighting = QGroupBox("☀️ Lighting && Color Grading")
         grp_lighting_layout = QVBoxLayout(grp_lighting)
         grp_lighting_layout.setSpacing(4)
 
@@ -659,25 +699,33 @@ class PhotoStudioApp(QMainWindow):
         right_layout.addWidget(self.btn_save_photo)
 
         self.btn_send_queue = QPushButton("➕ Send to A4 Print Queue")
-        self.btn_send_queue.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 8px;")
+        self.btn_send_queue.setObjectName("btn_send_queue")
         self.btn_send_queue.clicked.connect(self._on_send_to_print_queue)
         right_layout.addWidget(self.btn_send_queue)
 
         right_layout.addStretch()
-        splitter.addWidget(right_panel)
+        right_scroll.setWidget(right_panel)
+        splitter.addWidget(right_scroll)
 
-        splitter.setSizes([280, 720, 320])
+        splitter.setSizes([290, 700, 330])
 
     def _build_printer_tab(self, parent_widget: QWidget):
         layout = QHBoxLayout(parent_widget)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # Left: Queue & Layout settings
+        # Left: Queue & Layout settings - wrapped in QScrollArea so it never clips
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        left_scroll.setFixedWidth(380)
+
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_panel.setFixedWidth(360)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setContentsMargins(4, 4, 8, 4)
+        left_layout.setSpacing(8)
 
         grp_queue = QGroupBox("📋 A4 Print Queue")
         grp_queue_layout = QVBoxLayout(grp_queue)
@@ -689,6 +737,7 @@ class PhotoStudioApp(QMainWindow):
         self.tbl_queue.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tbl_queue.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.tbl_queue.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl_queue.setMinimumHeight(160)
         grp_queue_layout.addWidget(self.tbl_queue)
 
         self.btn_clear_queue = QPushButton("🗑️ Clear Entire Queue")
@@ -705,6 +754,7 @@ class PhotoStudioApp(QMainWindow):
         self.spin_margin.setRange(0.0, 30.0)
         self.spin_margin.setValue(10.0)
         self.spin_margin.setSingleStep(1.0)
+        self.spin_margin.setSuffix(" mm")
         self.spin_margin.valueChanged.connect(self._regenerate_a4_preview)
         margin_row.addWidget(self.spin_margin)
         grp_settings_layout.addLayout(margin_row)
@@ -715,6 +765,7 @@ class PhotoStudioApp(QMainWindow):
         self.spin_gap.setRange(0.0, 20.0)
         self.spin_gap.setValue(2.0)
         self.spin_gap.setSingleStep(0.5)
+        self.spin_gap.setSuffix(" mm")
         self.spin_gap.valueChanged.connect(self._regenerate_a4_preview)
         gap_row.addWidget(self.spin_gap)
         grp_settings_layout.addLayout(gap_row)
@@ -731,12 +782,12 @@ class PhotoStudioApp(QMainWindow):
         left_layout.addWidget(grp_layout_settings)
         left_layout.addStretch()
 
-        # Primary Output Bar
-        grp_output = QGroupBox("🖨️ Hardware Printing & Export")
+        # Primary Output Bar - escaped ampersand
+        grp_output = QGroupBox("🖨️ Hardware Printing && Export")
         grp_output_layout = QVBoxLayout(grp_output)
 
         self.btn_print_hw = QPushButton("🖨️ Print Directly (1:1 Hardware A4)")
-        self.btn_print_hw.setStyleSheet("background-color: #16a34a; color: white; font-weight: bold; padding: 10px;")
+        self.btn_print_hw.setObjectName("btn_print_hw")
         self.btn_print_hw.clicked.connect(self._on_print_hardware)
         grp_output_layout.addWidget(self.btn_print_hw)
 
@@ -749,7 +800,8 @@ class PhotoStudioApp(QMainWindow):
         grp_output_layout.addWidget(self.btn_export_pdf)
 
         left_layout.addWidget(grp_output)
-        layout.addWidget(left_panel)
+        left_scroll.setWidget(left_panel)
+        layout.addWidget(left_scroll)
 
         # Right: Live A4 Preview
         right_panel = QWidget()
@@ -772,7 +824,7 @@ class PhotoStudioApp(QMainWindow):
         QMainWindow, QWidget {
             background-color: #18181b;
             color: #f4f4f5;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Segoe UI', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
             font-size: 13px;
         }
         QGroupBox {
@@ -795,6 +847,7 @@ class PhotoStudioApp(QMainWindow):
             border-radius: 4px;
             padding: 5px 10px;
             color: #f4f4f5;
+            min-height: 24px;
         }
         QPushButton:hover {
             background-color: #3f3f46;
@@ -805,15 +858,54 @@ class PhotoStudioApp(QMainWindow):
         }
         QPushButton:disabled {
             background-color: #1f1f23;
-            color: #71717a;
+            color: #a1a1aa;
+            border-color: #27272a;
+        }
+        QPushButton#btn_send_queue {
+            background-color: #0284c7;
+            color: #ffffff;
+            font-weight: bold;
+            border: 1px solid #38bdf8;
+            border-radius: 4px;
+            padding: 8px 12px;
+        }
+        QPushButton#btn_send_queue:hover {
+            background-color: #0369a1;
+        }
+        QPushButton#btn_send_queue:pressed {
+            background-color: #075985;
+        }
+        QPushButton#btn_print_hw {
+            background-color: #16a34a;
+            color: #ffffff;
+            font-weight: bold;
+            border: 1px solid #22c55e;
+            border-radius: 4px;
+            padding: 10px 14px;
+        }
+        QPushButton#btn_print_hw:hover {
+            background-color: #15803d;
+        }
+        QPushButton#btn_print_hw:pressed {
+            background-color: #166534;
+        }
+        QPushButton#btn_pick_color {
+            background-color: #2563eb;
+            color: #ffffff;
+            font-weight: bold;
+        }
+        QPushButton#btn_pick_color:disabled {
+            background-color: #1f1f23;
+            color: #a1a1aa;
             border-color: #27272a;
         }
         QComboBox, QSpinBox, QDoubleSpinBox {
             background-color: #27272a;
             border: 1px solid #3f3f46;
             border-radius: 4px;
-            padding: 4px;
+            padding: 3px 6px;
             color: #f4f4f5;
+            min-height: 22px;
         }
         QComboBox::drop-down {
             border: none;
@@ -871,6 +963,50 @@ class PhotoStudioApp(QMainWindow):
         QStatusBar {
             background-color: #121214;
             color: #a1a1aa;
+        }
+        QScrollArea {
+            border: none;
+            background-color: transparent;
+        }
+        QScrollBar:vertical {
+            background-color: #18181b;
+            width: 10px;
+            margin: 0px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #3f3f46;
+            min-height: 25px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background-color: #52525b;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            background: none;
+        }
+        QScrollBar:horizontal {
+            background-color: #18181b;
+            height: 10px;
+            margin: 0px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #3f3f46;
+            min-width: 25px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:horizontal:hover {
+            background-color: #52525b;
+        }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            width: 0px;
+        }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+            background: none;
         }
         """
         self.setStyleSheet(dark_qss)
