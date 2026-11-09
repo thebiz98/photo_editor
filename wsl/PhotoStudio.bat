@@ -1,9 +1,15 @@
-
 @echo off
 setlocal
+cd /d "%~dp0"
 
-:: 1. Start the Python app inside WSL (using python3)
-start "" wsl -d Ubuntu bash -c "cd ~/photo_editor && source venv/bin/activate && python3 app.py"
+:: ─────────────────────────────────────────────────────────────────────────────
+:: Photo Studio - WSL Launcher
+:: Starts Gradio in Ubuntu WSL and launches Microsoft Edge in App Mode
+:: ─────────────────────────────────────────────────────────────────────────────
+
+:: 1. Start the Python app inside WSL
+:: Checks local Linux home first (~/photo_editor), then the Windows mount path
+start "" wsl -d Ubuntu bash -c "if [ -d ~/photo_editor/venv ]; then cd ~/photo_editor; elif [ -d /mnt/c/custom_apps/photo_editor/wsl/venv ]; then cd /mnt/c/custom_apps/photo_editor/wsl; else cd $(wslpath '%~dp0'); fi; source venv/bin/activate && python3 app.py"
 
 :: 2. Wait 3 seconds for the Gradio server to spin up on port 7860
 timeout /t 3 /nobreak >nul

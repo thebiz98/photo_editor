@@ -1,26 +1,8 @@
 @echo off
-setlocal
 cd /d "%~dp0"
-
-echo ===================================================
-echo Setting up Windows ARM64 Virtual Environment
-echo ===================================================
-
-if not exist "venv\Scripts\python.exe" (
-    echo Creating virtual environment with system ARM64 Python...
-    python -m venv venv
-)
-
-echo.
-echo Upgrading pip, setuptools, and wheel...
-venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
-
-echo.
-echo Installing native ARM64 core libraries...
-venv\Scripts\python.exe -m pip install numpy pillow onnxruntime huggingface_hub PySide6
-
-echo.
-echo ===================================================
-echo Environment setup complete!
-echo ===================================================
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install PySide6-Essentials huggingface_hub
+.\venv\Scripts\python.exe -c "from PySide6 import QtWidgets, QtGui, QtCore, QtPrintSupport; print('SAC Verification Passed!')"
+.\venv\Scripts\python.exe download_models.py
+.\venv\Scripts\python.exe -m pip freeze > install_info.txt
 pause

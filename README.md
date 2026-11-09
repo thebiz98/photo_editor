@@ -1,162 +1,200 @@
-# Local Photo & Print Studio 📸🖨️
+# Native Windows ARM64 Photo Studio & Print Engine 📸🖨️
 
-A local, AI-powered photo editing and print preparation studio designed specifically for identity photos, visa/passport portraits, and multi-copy photo sheet printing.
+A 100% offline, native Windows 11 desktop application designed for portrait matting, official document/ID card photo retouching, physical size calibration, and automated 1:1 hardware A4 print layout.
 
-The studio combines deep-learning background matting with deterministic image enhancements and a 2D shelf-packing layout engine that outputs print-ready, high-resolution (300 DPI) A4 sheets with physical dimension accuracy.
+Built specifically for **Windows 11 on ARM64 (Qualcomm Snapdragon X)** with zero web stack, zero browser overhead, full compliance with **Windows Smart App Control (SAC)**, and bundled local ONNX neural models.
 
 ---
 
-## 🎯 Purpose & Capabilities
+## 🎯 Purpose & Key Innovations
 
-Preparing official identification, visa, and passport photos usually requires multiple fragmented tools: background removers, photo editors, dimension croppers, and layout software to tile multiple copies onto photo paper. 
+Preparing official passport, visa, and ID photos or fixing scanned document photos typically requires multiple disconnected tools. **Native Photo Studio** brings the entire pipeline into a single, high-performance desktop application:
 
-**Local Photo & Print Studio** provides an integrated, offline-capable pipeline that handles the entire workflow:
-1. **Capture / Ingest**: Upload any portrait or capture directly via webcam.
-2. **AI Background Extraction**: Extract clean subject cutouts with hair-level detail using local neural networks.
-3. **Backdrop Replacement & Lighting**: Apply official backgrounds (White, Passport Grey, Corporate Navy, blur, or custom backdrops) and tune lighting independently on the subject or the whole frame.
-4. **Standard Physical Sizing**: Crop to exact physical standards (Indian Passport/ID, Indian Stamp, US Visa, custom dimensions) at true 300 DPI.
-5. **A4 Auto-Grid Packing**: Arrange arbitrary quantities of different photo sizes onto standard A4 paper with customizable margins, photo spacing, and cut guides.
-6. **1:1 Physical Printing**: Print directly from the browser with zero margin scaling or export as a 300 DPI PNG.
+1. **Zero Web Stack / Zero Server**: Pure native Qt6 GUI (`PySide6-Essentials`) — no Gradio, no FastAPI, no Uvicorn, and no browser chrome.
+2. **100% Offline Runtime & Bundled Weights**: Pre-bundled local ONNX weights (`RMBG-1.4` and `MODNet`). Runs completely disconnected with zero network calls.
+3. **Dual-Mode Interactive ROI Selection**:
+   - **Whole Image**: Apply lighting, background cutout, and preset physical scaling to the full picture.
+   - **Edit Inside Box Only (Patch ID / Document)**: Select a sub-region (like the portrait on a scanned ID or passport application), fix its lighting and backdrop, and bake it seamlessly back into the document without altering surrounding text or seals.
+   - **Crop to Box (Extract Standalone Photo)**: Extract the sub-region and scale directly to standard physical dimensions at 300 DPI.
+4. **Morphological Edge Refinement**: Replaces manual brushwork with instant morphological erosion (`Edge Choke` 0–5 px) to eliminate background halos around hair and shoulders, plus Gaussian blur (`Edge Feather` 0.0–5.0 px) for smooth edge transitions.
+5. **In-Memory Alpha Caching**: Raw alpha mattes are cached in memory so moving lighting sliders, color grading, backdrop colors, or edge refinement sliders never triggers redundant ONNX inference.
+6. **A4 2D Shelf Bin-Packing Engine**: Automatically tiles arbitrary photo dimensions and copy counts onto standard A4 paper (`2480 x 3508` @ 300 DPI) with customizable margins, inter-photo gaps, and scissor cut lines.
+7. **True 1:1 Hardware Printing**: Directly drives physical printers via `QPrinter` with a 0 mm margin layout, preventing Windows printer drivers from auto-shrinking 35×45 mm photos.
 
 ---
 
 ## 🏗️ Architecture & Pipeline
 
-The application is structured into modular layers separating the UI, neural inference, deterministic image processing, and print layout algorithms.
-
 ```
- ┌──────────────────────┐
- │  Input Photo         │  (Upload or Webcam)
- └──────────┬───────────┘
-            │
-            ▼
- ┌──────────────────────┐      ┌───────────────────────────────┐
- │  AI Segmentation     │ ───► │ ONNX Runtime                  │
- │  (engine.py)         │      │ (MODNet / RMBG-1.4)           │
- └──────────┬───────────┘      └───────────────────────────────┘
-            │ Alpha Mask
-            ▼
- ┌──────────────────────┐
- │  Mask Refinement     │  (Threshold, Edge Feathering,
- └──────────┬───────────┘   Manual Brush Touch-up)
-            │
-            ▼
- ┌──────────────────────┐
- │  Lighting & Color    │  (Brightness, Contrast, Saturation,
- │  (Pillow / NumPy)    │   Sharpness, Dual-Channel Warmth)
- └──────────┬───────────┘  [Scope: Subject-Only or Whole-Image]
-            │
-            ▼
- ┌──────────────────────┐
- │  Compositing & Crop  │  (Backdrop synthesis, Aspect Crop,
- └──────────┬───────────┘   Physical DPI Resize)
-            │
-            ▼
- ┌──────────────────────┐
- │  A4 Shelf Packing    │  (printer.py: Shelf bin-packing,
- │  & Print Studio      │   Margins, Gaps, Scissor Guides)
- └──────────┬───────────┘
-            │
-      ┌─────┴──────────────────┐
-      ▼                        ▼
-┌──────────────┐       ┌─────────────────┐
-│ Browser 1:1  │       │ 300 DPI PNG     │
-│ Print Dialog │       │ Master Export   │
-└──────────────┘       └─────────────────┘
+ ┌────────────────────────────────────────────────────────┐
+ │  Workspace Ingest (Add Photos, Drag & Drop, Ctrl+V)    │
+ └──────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+ ┌────────────────────────────────────────────────────────┐
+ │  Interactive Canvas (Pan, Zoom, 8-Point ROI Handles)   │
+ └──────────────────────────┬─────────────────────────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            ▼                               ▼
+ ┌──────────────────────┐       ┌──────────────────────┐
+ │ ROI Mode: Patch ID   │       │ ROI Mode: Crop /     │
+ │ (Edit inside box,    │       │ Whole Image          │
+ │  paste back into doc)│       │ (Extract standalone) │
+ └──────────┬───────────┘       └──────────┬───────────┘
+            │                              │
+            └───────────────┬──────────────┘
+                            │
+                            ▼
+ ┌────────────────────────────────────────────────────────┐
+ │  Deterministic Lighting & Color Grading                │
+ │  (Brightness, Contrast, Saturation, Sharpness, Warmth) │
+ └──────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+ ┌────────────────────────────────────────────────────────┐
+ │  AI Matting & In-Memory Alpha Cache (engine.py)        │
+ │  (RMBG-1.4: 1024x1024  |  MODNet: 512x512)            │
+ └──────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+ ┌────────────────────────────────────────────────────────┐
+ │  Morphological Edge Refinement & Backdrop Compositing  │
+ │  (MinFilter Choke, Gaussian Feather, Solid/Blur BG)   │
+ └──────────────────────────┬─────────────────────────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            ▼                               ▼
+ ┌──────────────────────┐       ┌──────────────────────┐
+ │ Single Photo Export  │       │ Send to A4 Queue     │
+ │ (PNG / JPEG @ 300DPI)│       │ (Tab 2: Print Studio)│
+ └──────────────────────┘       └──────────┬───────────┘
+                                           │
+                                           ▼
+                                ┌──────────────────────┐
+                                │ A4 2D Shelf Packing  │
+                                │ (printer.py)         │
+                                └──────────┬───────────┘
+                                           │
+                    ┌──────────────────────┼──────────────────────┐
+                    ▼                      ▼                      ▼
+         ┌─────────────────────┐ ┌────────────────────┐ ┌────────────────────┐
+         │ 1:1 Hardware Print  │ │ 300-DPI A4 PNG     │ │ 300-DPI A4 PDF     │
+         │ (QPrinter 0mm Marg) │ │ (2480 x 3508 px)   │ │ (High-Res Master)  │
+         └─────────────────────┘ └────────────────────┘ └────────────────────┘
 ```
 
-### Module Breakdown
-
-| Module | Responsibility |
-| :--- | :--- |
-| **[`app.py`](app.py)** | **UI & Orchestration**: Main entry point built with Gradio Blocks. Manages session states (`orig_state`, `mask_state`, `print_queue_state`), interactive controls, event routing, and tabbed workflow. |
-| **[`engine.py`](engine.py)** | **Inference & Image Processing**: Handles ONNX model sessions, tensor preprocessing/postprocessing, alpha matting, lighting adjustments, manual mask brush editing, and dimension-accurate cropping. |
-| **[`printer.py`](printer.py)** | **A4 Layout Engine**: Implements a 2D shelf bin-packing algorithm that places arbitrary photo tiles onto an A4 canvas (210mm × 297mm) at 300 DPI, enforcing margins, inter-photo gaps, and cutting guides. |
-| **[`styles.py`](styles.py)** | **Layout & Print Styling**: Custom CSS defining the edge-to-edge 3-pane responsive studio workspace, independent sidebar scrolling, and zero-margin JavaScript print utility (`@page { size: A4 portrait; margin: 0; }`). |
-
 ---
 
-## 🤖 AI Models & Hardware Acceleration
+## 📂 Repository Structure
 
-Background extraction is powered by local ONNX neural network models loaded via `huggingface_hub` and executed through `onnxruntime`:
-
-### 1. MODNet (`Xenova/modnet`)
-- **Specialty**: Portrait matting and human subject extraction.
-- **Characteristics**: Excellent edge transparency around fine hair strands and complex silhouettes.
-- **Preprocessing**: Dynamically calculates dimension multiples of 32 centered around a 512px reference constraint to preserve natural aspect ratios during inference.
-
-### 2. RMBG-1.4 (`briaai/RMBG-1.4`)
-- **Specialty**: Generalist salient object and subject segmentation.
-- **Characteristics**: High boundary sharpness and contrast separation across diverse foreground subjects.
-- **Preprocessing**: Standardized 1024×1024 tensor normalization.
-
-### Hardware Execution Providers
-`engine.py` dynamically queries available ONNX Runtime execution providers to maximize performance:
-- `QNNExecutionProvider`: Qualcomm Snapdragon NPU acceleration.
-- `DmlExecutionProvider`: DirectML acceleration for DirectX 12 compatible GPUs.
-- `CPUExecutionProvider`: Universal CPU fallback.
-
----
-
-## 🛠️ Key Features
-
-### 1. Photo Editor Workspace (Tab 1)
-- **Interactive Light & Color**:
-  - Independent adjustments: Brightness, Contrast, Saturation, Sharpness, and Warmth.
-  - Selective scoping: Adjust the **Whole Image** or isolate adjustments to **Subject Only** using the alpha mask.
-- **Backdrop Modes**:
-  - Original (No Cutout)
-  - White Studio (`#FFFFFF`) — standard passport specification
-  - Passport Grey (`#E5E7EB`)
-  - Corporate Navy (`#1E293B`)
-  - Custom Solid Color via color picker
-  - Gaussian Background Blur (adjustable 5–50px radius)
-  - Custom Backdrop Image
-  - Transparent PNG export
-  - Raw Mask Debug View
-- **Mask Refinement & Manual Brush**:
-  - Auto-mask tightness/threshold slider.
-  - Gaussian edge feathering (0.0 to 5.0).
-  - Built-in brush editor: paint black to erase background artifacts or paint white to restore clipped foreground features.
-- **Preset Document Dimensions**:
-  - **Indian Passport / ID**: 1.5" × 2.0" (3.5 × 4.5 cm)
-  - **Indian Stamp Size**: 0.8" × 1.0"
-  - **US Visa**: 2.0" × 2.0" (51 × 51 mm)
-  - **Standard Ratios**: 1:1 Square, 3:4 Passport, 4:5 Portrait
-  - **Custom Size**: User-defined width and height in inches.
-
-### 2. A4 Print Studio (Tab 2)
-- **Multi-Photo Queue**: Add edited photos with designated copy counts into a unified print queue.
-- **Live Editable Dataframe**: Directly edit width, height, or copy counts in a spreadsheet-style table with instant layout recalculation.
-- **Shelf Bin-Packing**: Automatically wraps photos row by row, keeping track of sheet bounds and reporting overflow warnings if counts exceed a single sheet.
-- **Print Formatting Controls**:
-  - Page margin adjustment (0 to 20 mm).
-  - Photo gap spacing (0 to 15 mm).
-  - Toggleable dashed cutting borders (`#9CA3AF`).
-- **Precision Output**:
-  - Direct 1:1 browser print popup formatted for borderless A4 portrait output.
-  - High-res 300 DPI PNG download (2481 × 3507 pixels).
-
----
-
-## 💻 Tech Stack
-
-- **Framework**: [Gradio](https://github.com/gradio-app/gradio) (Responsive web UI, image canvas, state management)
-- **AI / ML Runtime**: [ONNX Runtime](https://onnxruntime.ai/) (`onnxruntime`)
-- **Model Distribution**: [Hugging Face Hub](https://huggingface.co/docs/huggingface_hub) (`huggingface_hub`)
-- **Image Processing**: [Pillow](https://python-pillow.org/) (`PIL.Image`, `PIL.ImageEnhance`, `PIL.ImageFilter`, `PIL.ImageDraw`)
-- **Numerical Computing**: [NumPy](https://numpy.org/) (Tensor normalization, channel shifting, alpha compositing)
-
----
-
-## 📋 Repository Structure
-
-```
+```text
 photo_editor/
-├── app.py              # Main Gradio application, state wiring & event handlers
-├── engine.py           # ONNX model inference, color balance & mask processing
-├── printer.py          # A4 shelf bin-packing layout engine (300 DPI)
-├── styles.py           # Studio layout CSS & 1:1 JavaScript print handler
-├── .gitignore          # Git exclusion rules
-└── README.md           # Project documentation
+├── venv/                       # Verified Windows 11 ARM64 virtual environment
+├── models/                     # Bundled offline ONNX model weights
+│   ├── rmbg14/model.onnx       # RMBG-1.4 high-precision segmentation (~176 MB)
+│   └── modnet/model.onnx       # MODNet portrait specialist (~25.8 MB)
+├── install.bat                 # One-click dependency setup & SAC verification
+├── download_models.py          # Offline model bundler (skips if present on disk)
+├── engine.py                   # ONNX inference, ROI patch engine, edge choke & lighting
+├── printer.py                  # A4 2D shelf bin-packing & 1:1 QPrinter hardware engine
+├── main.py                     # Native PySide6 GUI desktop application
+├── PhotoStudio.bat             # Zero-console Windows launcher (pythonw.exe)
+├── PLAN.md                     # Technical architecture & specification document
+├── README.md                   # This documentation
+└── wsl/                        # Legacy / Alternative WSL Web Stack (Gradio)
+    ├── README.md               # WSL installation and setup guide
+    ├── app.py                  # Gradio web application
+    ├── PhotoStudio.bat         # WSL + Edge app launcher
+    └── PhotoStudio_Native.bat  # WSL + pywebview launcher
 ```
+
+---
+
+## ⚡ Quick Start
+
+### 1. One-Click Installation
+Run [install.bat](file:///c:/custom_apps/photo_editor/install.bat) to install required dependencies, verify Windows Smart App Control compliance, and ensure model weights are bundled:
+
+```bat
+install.bat
+```
+
+### 2. Launch the Desktop Application
+Double-click [PhotoStudio.bat](file:///c:/custom_apps/photo_editor/PhotoStudio.bat) or run from your terminal:
+
+```bat
+.\venv\Scripts\python.exe main.py
+```
+
+---
+
+## 📦 Native Executable Bundling (`.exe`)
+
+You can compile the native Python application into a standalone Windows executable (`.exe`) that runs without exposing terminal windows or requiring manual Python invocation.
+
+### Method 1: Build Standalone Executable with PyInstaller
+
+1. Activate your virtual environment and install `pyinstaller`:
+   ```bat
+   .\venv\Scripts\python.exe -m pip install pyinstaller
+   ```
+
+2. Compile the application into a distribution folder:
+   ```bat
+   .\venv\Scripts\pyinstaller --noconsole --name "PhotoStudio" ^
+       --add-data "models;models" ^
+       --collect-all PySide6 ^
+       --collect-all onnxruntime ^
+       main.py
+   ```
+
+   > [!TIP]
+   > On Windows 11 ARM64 with Smart App Control enabled, `--onedir` mode (the default shown above) is strongly recommended over `--onefile`. It enables instant startup without unpacking temporary files and allows Windows to cleanly verify digital signatures on runtime DLLs.
+
+3. The generated executable will be located in:
+   ```text
+   dist\PhotoStudio\PhotoStudio.exe
+   ```
+
+### Method 2: Zero-Console Launcher (`PhotoStudio.bat`)
+
+If you want an instant zero-overhead launcher without re-bundling files, double-click [PhotoStudio.bat](file:///c:/custom_apps/photo_editor/PhotoStudio.bat). It uses Windows `pythonw.exe` to run [main.py](file:///c:/custom_apps/photo_editor/main.py) natively with zero console windows.
+
+---
+
+## 📐 Physical Document Presets (300 DPI)
+
+| Preset Name | Physical Size (mm) | Pixel Dimensions (300 DPI) | Common Use |
+| :--- | :---: | :---: | :--- |
+| **Standard Passport** | 35.0 × 45.0 mm | 413 × 531 px | UK, EU, Schengen, Australian Passport |
+| **Indian Passport / US Visa** | 50.8 × 50.8 mm (2×2") | 600 × 600 px | Indian Passport, US Visa, OCI |
+| **PAN / Official ID Portrait** | 25.0 × 35.0 mm | 295 × 413 px | Indian PAN Card, Government ID |
+| **Indian Stamp Size** | 20.0 × 25.0 mm | 236 × 295 px | Application forms, Admit cards |
+| **Standard ID Card Full** | 85.6 × 54.0 mm | 1011 × 638 px | ISO/IEC 7810 ID-1 (Aadhaar, Driving License) |
+| **Custom Size (mm)** | User-defined | User-defined | Any custom physical millimeter dimension |
+
+---
+
+## 🐧 Legacy / Alternative: WSL Web Stack
+
+Prior to the native Qt6 desktop app, an experimental web version was developed using Gradio and FastAPI. 
+
+Running the web stack directly on Windows 11 ARM64 can trigger Smart App Control blocks due to unsigned C-extensions (like `orjson`). To run the web stack inside an isolated Linux environment using Windows Subsystem for Linux (WSL), refer to the dedicated guide:
+
+👉 **[WSL Web Stack Setup & Installation Guide](file:///c:/custom_apps/photo_editor/wsl/README.md)**
+
+The WSL guide details:
+- How to install WSL and Ubuntu on Windows 11.
+- Setting up Python virtual environments inside WSL.
+- Installing Gradio web dependencies.
+- Running the web studio seamlessly from Windows via [wsl/PhotoStudio.bat](file:///c:/custom_apps/photo_editor/wsl/PhotoStudio.bat) in borderless Microsoft Edge App Mode.
+
+---
+
+## 📄 License & Attribution
+
+- **MODNet**: Portrait Matting via [Xenova/modnet](https://huggingface.co/Xenova/modnet).
+- **RMBG-1.4**: High-accuracy salient background removal by [BRIA AI](https://bria.ai).
+- **Qt6**: Built with `PySide6-Essentials` (The Qt Company).
+- **ONNX Runtime**: Machine learning inference engine by Microsoft.
