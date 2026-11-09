@@ -197,6 +197,27 @@ def composite_backdrop(
     return Image.composite(fg_rgb, bg_img, refined_alpha)
 
 
+def crop_and_resize(
+    img: Image.Image,
+    roi_box: Tuple[int, int, int, int],
+    target_px: Optional[Tuple[int, int]] = None
+) -> Image.Image:
+    """
+    Crops img to roi_box (x1, y1, x2, y2) and resizes to target_px (width_px, height_px).
+    """
+    x1, y1, x2, y2 = roi_box
+    w, h = img.size
+    x1 = max(0, min(int(round(min(x1, x2))), w - 1))
+    y1 = max(0, min(int(round(min(y1, y2))), h - 1))
+    x2 = max(x1 + 1, min(int(round(max(x1, x2))), w))
+    y2 = max(y1 + 1, min(int(round(max(y1, y2))), h))
+
+    cropped = img.crop((x1, y1, x2, y2))
+    if target_px is not None and target_px[0] and target_px[1]:
+        cropped = cropped.resize((int(target_px[0]), int(target_px[1])), Image.LANCZOS)
+    return cropped
+
+
 def process_image_pipeline(
     full_img: Image.Image,
     roi_box: Optional[Tuple[int, int, int, int]],
@@ -207,24 +228,9 @@ def process_image_pipeline(
     """
     Main image processing pipeline:
     - roi_mode:
-        - "Whole Image (Ignore Box)" (or "whole")
-        - "Edit Inside Box Only (Patch ID / Document)" (or "patch")
-        - "Crop to Box (Extract Standalone Photo)" (or "crop")
-    - params dictionary containing:
-        - remove_bg (bool)
-        - ai_model (str: "RMBG-1.4" | "MODNet")
-        - backdrop (str)
-        - custom_color (Tuple[int, int, int])
-        - choke_px (int 0..5)
-        - feather_px (float 0.0..5.0)
-        - brightness (float 0.5..1.5)
-        - contrast (float 0.5..1.5)
-        - saturation (float 0.0..2.0)
-        - sharpness (float 0.0..3.0)
-        - warmth (int -30..30)
-        - preset_name (str)
-        - custom_w_mm (float)
-        - custom_h_mm (float)
+        - "Whole Image" (or "whole"): Process whole image without cropping
+        - "Patch ID" (or "patch"): Edit inside roi_box and paste back into document
+        - "Crop to Box" (or "crop"): Process full image with box displayed interactively on canvas
     """
     if seg_engine is None:
         seg_engine = GLOBAL_SEGMENTATION_ENGINE
@@ -250,19 +256,6 @@ def process_image_pipeline(
     choke_px = int(params.get("choke_px", 0))
     feather_px = float(params.get("feather_px", 0.0))
 
-    preset_name = params.get("preset_name", "Freeform / Original")
-    custom_w_mm = params.get("custom_w_mm", 35.0)
-    custom_h_mm = params.get("custom_h_mm", 45.0)
-
-    target_px: Optional[Tuple[int, int]] = None
-    if preset_name == "Custom Size (mm)":
-        if custom_w_mm and custom_h_mm:
-            target_px = (round(custom_w_mm * PX_PER_MM), round(custom_h_mm * PX_PER_MM))
-    elif preset_name in PRESET_SIZES:
-        _, _, pw, ph = PRESET_SIZES[preset_name]
-        if pw and ph:
-            target_px = (pw, ph)
-
     norm_mode = "whole"
     if "Patch" in roi_mode or roi_mode == "patch":
         norm_mode = "patch"
@@ -286,26 +279,9 @@ def process_image_pipeline(
         result.paste(processed_patch, (x1, y1))
         return result
 
-    elif norm_mode == "crop":
-        # Mode 2: Crop to Box (Extract Standalone Photo)
-        x1, y1, x2, y2 = roi_box
-        cropped = img.crop((x1, y1, x2, y2))
-        lit_crop = apply_lighting(cropped, params)
-
-        if remove_bg:
-            alpha = seg_engine.get_alpha(cropped, ai_model)
-            refined_alpha = refine_alpha(alpha, choke_px, feather_px)
-            processed_crop = composite_backdrop(lit_crop, cropped, refined_alpha, backdrop, custom_color)
-        else:
-            processed_crop = lit_crop
-
-        if target_px is not None:
-            processed_crop = ImageOps.fit(processed_crop, target_px, method=Image.LANCZOS)
-
-        return processed_crop
-
     else:
-        # Mode 0: Whole Image
+        # Mode 0 (Whole Image) & Mode 2 (Crop to Box Interactive Preview):
+        # Apply deterministic adjustments to full image without destructive auto-crop
         lit_full = apply_lighting(img, params)
 
         if remove_bg:
@@ -314,8 +290,5 @@ def process_image_pipeline(
             result = composite_backdrop(lit_full, img, refined_alpha, backdrop, custom_color)
         else:
             result = lit_full
-
-        if target_px is not None:
-            result = ImageOps.fit(result, target_px, method=Image.LANCZOS)
 
         return result
