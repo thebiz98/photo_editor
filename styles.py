@@ -306,4 +306,11 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: none;
 }
+QSplitter::handle:horizontal {
+    background-color: #27272a;
+    width: 4px;
+}
+QSplitter::handle:horizontal:hover {
+    background-color: #0284c7;
+}
 """

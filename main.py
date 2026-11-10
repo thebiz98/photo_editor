@@ -138,11 +138,10 @@ class PhotoStudioApp(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(splitter)
 
-        # 1. Left Panel (Workspace & ROI Mode) - Compact fixed width, NO horizontal scroll
+        # 1. Left Panel (Workspace & ROI Mode) - Compact width, NO horizontal scroll
         left_panel = QWidget()
-        left_panel.setFixedWidth(250)
         left_panel.setMinimumWidth(240)
-        left_panel.setMaximumWidth(280)
+        left_panel.setMaximumWidth(300)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.setSpacing(5)
@@ -326,7 +325,8 @@ class PhotoStudioApp(QMainWindow):
         right_scroll.setFrameShape(QFrame.NoFrame)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        right_scroll.setFixedWidth(275)
+        right_scroll.setMinimumWidth(260)
+        right_scroll.setMaximumWidth(450)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
