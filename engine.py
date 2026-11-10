@@ -230,7 +230,7 @@ def process_image_pipeline(
     - roi_mode:
         - "Whole Image" (or "whole"): Process whole image without cropping
         - "Patch ID" (or "patch"): Edit inside roi_box and paste back into document
-        - "Crop to Box" (or "crop"): Process full image with box displayed interactively on canvas
+        
     """
     if seg_engine is None:
         seg_engine = GLOBAL_SEGMENTATION_ENGINE
@@ -256,11 +256,7 @@ def process_image_pipeline(
     choke_px = int(params.get("choke_px", 0))
     feather_px = float(params.get("feather_px", 0.0))
 
-    norm_mode = "whole"
-    if "Patch" in roi_mode or roi_mode == "patch":
-        norm_mode = "patch"
-    elif "Crop" in roi_mode or roi_mode == "crop":
-        norm_mode = "crop"
+    norm_mode = "patch" if ("Patch" in roi_mode or roi_mode == "patch") else "whole"
 
     if norm_mode == "patch":
         # Mode 1: Edit Inside Box Only (Patch Document/ID)
@@ -280,7 +276,7 @@ def process_image_pipeline(
         return result
 
     else:
-        # Mode 0 (Whole Image) & Mode 2 (Crop to Box Interactive Preview):
+        # Mode 0 (Whole Image):
         # Apply deterministic adjustments to full image without destructive auto-crop
         lit_full = apply_lighting(img, params)
 

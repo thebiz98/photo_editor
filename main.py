@@ -546,27 +546,24 @@ class PhotoStudioApp(QMainWindow):
         grp_workspace_layout.addWidget(self.btn_remove_photo)
         left_layout.addWidget(grp_workspace)
 
-        # Box Selection Mode
-        grp_roi_mode = QGroupBox("🔲 Box Selection Mode")
+        # Retouch Scope (Lighting & Local Patching)
+        grp_roi_mode = QGroupBox("🎯 Retouch Scope")
         grp_roi_layout = QVBoxLayout(grp_roi_mode)
         grp_roi_layout.setSpacing(3)
         self.bg_roi_mode = QButtonGroup(self)
 
         self.radio_mode_whole = QRadioButton("Whole Image")
         self.radio_mode_patch = QRadioButton("Edit Inside Box (Patch)")
-        self.radio_mode_crop = QRadioButton("Crop to Box (Extract)")
         self.radio_mode_whole.setChecked(True)
 
         self.bg_roi_mode.addButton(self.radio_mode_whole, 0)
         self.bg_roi_mode.addButton(self.radio_mode_patch, 1)
-        self.bg_roi_mode.addButton(self.radio_mode_crop, 2)
         self.bg_roi_mode.idClicked.connect(self._on_roi_mode_changed)
 
         grp_roi_layout.addWidget(self.radio_mode_whole)
         grp_roi_layout.addWidget(self.radio_mode_patch)
-        grp_roi_layout.addWidget(self.radio_mode_crop)
 
-        self.btn_bake_edit = QPushButton("✔️ Bake / Commit Edits")
+        self.btn_bake_edit = QPushButton("✔️ Bake Edits to Base")
         self.btn_bake_edit.setToolTip("Permanently commits current patch or lighting into image base")
         self.btn_bake_edit.clicked.connect(self._on_bake_edit)
         grp_roi_layout.addWidget(self.btn_bake_edit)
@@ -1319,11 +1316,9 @@ class PhotoStudioApp(QMainWindow):
                 self.combo_presets.setCurrentText(snapshot["preset"])
             if item["roi"]:
                 self.canvas.set_roi_box(item["roi"])
-                self.radio_mode_crop.setChecked(True)
                 self.btn_apply_crop.setEnabled(True)
             else:
                 self.canvas.set_roi_box(None)
-                self.radio_mode_whole.setChecked(True)
                 self.btn_apply_crop.setEnabled(False)
         finally:
             self._block_signals = False
@@ -1362,7 +1357,6 @@ class PhotoStudioApp(QMainWindow):
         self._block_signals = True
         try:
             self.canvas.set_roi_box(None)
-            self.radio_mode_whole.setChecked(True)
             self.btn_apply_crop.setEnabled(False)
             self.combo_presets.setCurrentText("Freeform / Original")
         finally:
@@ -1515,7 +1509,6 @@ class PhotoStudioApp(QMainWindow):
             try:
                 self.spin_custom_w.setValue(unit_w)
                 self.spin_custom_h.setValue(unit_h)
-                self.radio_mode_crop.setChecked(True)
             finally:
                 self._block_signals = False
 
@@ -1528,12 +1521,10 @@ class PhotoStudioApp(QMainWindow):
             )
         elif text == "Freeform / Original":
             self.canvas.set_roi_box(None)
-            self.radio_mode_whole.setChecked(True)
             self.btn_apply_crop.setEnabled(False)
             self.statusBar().showMessage("Freeform: Whole image selected.", 3000)
             self._trigger_render()
         elif text == "Custom Size":
-            self.radio_mode_crop.setChecked(True)
             self.btn_apply_crop.setEnabled(True)
             w_mm, h_mm = self._get_current_dimensions_in_mm()
             aspect = w_mm / h_mm if h_mm > 0 else 1.0
@@ -1556,7 +1547,6 @@ class PhotoStudioApp(QMainWindow):
             finally:
                 self._block_signals = False
 
-        self.radio_mode_crop.setChecked(True)
         self.btn_apply_crop.setEnabled(True)
 
         if self._dim_w_mm > 0 and self._dim_h_mm > 0:
@@ -1570,19 +1560,10 @@ class PhotoStudioApp(QMainWindow):
 
         if mode_id == 0:  # Whole Image
             self.canvas.set_roi_box(None)
-            self.btn_apply_crop.setEnabled(False)
             self._trigger_render()
         elif mode_id == 1:  # Patch ID
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=None)
-            self.btn_apply_crop.setEnabled(False)
-            self._trigger_render()
-        elif mode_id == 2:  # Crop to Box
-            if not self.canvas.get_roi_box():
-                w_mm, h_mm = self._get_current_dimensions_in_mm()
-                aspect = w_mm / h_mm if h_mm > 0 else 1.0
-                self.canvas.spawn_centered_box(aspect_ratio=aspect)
-            self.btn_apply_crop.setEnabled(True)
             self._trigger_render()
 
     def _on_apply_crop(self):
@@ -1619,7 +1600,6 @@ class PhotoStudioApp(QMainWindow):
             self._block_signals = True
             try:
                 self.canvas.set_roi_box(None)
-                self.radio_mode_whole.setChecked(True)
             finally:
                 self._block_signals = False
 
@@ -1712,11 +1692,7 @@ class PhotoStudioApp(QMainWindow):
         roi_box = self.canvas.get_roi_box()
 
         mode_id = self.bg_roi_mode.checkedId()
-        mode_str = "whole"
-        if mode_id == 1:
-            mode_str = "patch"
-        elif mode_id == 2:
-            mode_str = "crop"
+        mode_str = "patch" if mode_id == 1 else "whole"
 
         # Synchronous execution with wait cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
