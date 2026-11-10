@@ -12,6 +12,13 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
+from transforms import (
+    crop_and_resize,
+    extract_perspective_quad,
+    calculate_perspective_coeffs,
+    calculate_natural_quad_dimensions,
+)
+
 # Base print resolution constants
 DPI = 300
 PX_PER_MM = 300.0 / 25.4  # ~11.8110236 px/mm
@@ -196,26 +203,6 @@ def composite_backdrop(
 
     return Image.composite(fg_rgb, bg_img, refined_alpha)
 
-
-def crop_and_resize(
-    img: Image.Image,
-    roi_box: Tuple[int, int, int, int],
-    target_px: Optional[Tuple[int, int]] = None
-) -> Image.Image:
-    """
-    Crops img to roi_box (x1, y1, x2, y2) and resizes to target_px (width_px, height_px).
-    """
-    x1, y1, x2, y2 = roi_box
-    w, h = img.size
-    x1 = max(0, min(int(round(min(x1, x2))), w - 1))
-    y1 = max(0, min(int(round(min(y1, y2))), h - 1))
-    x2 = max(x1 + 1, min(int(round(max(x1, x2))), w))
-    y2 = max(y1 + 1, min(int(round(max(y1, y2))), h))
-
-    cropped = img.crop((x1, y1, x2, y2))
-    if target_px is not None and target_px[0] and target_px[1]:
-        cropped = cropped.resize((int(target_px[0]), int(target_px[1])), Image.LANCZOS)
-    return cropped
 
 
 def process_image_pipeline(
