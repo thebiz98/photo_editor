@@ -267,6 +267,55 @@ class ROIRectItem(QGraphicsRectItem):
             self.on_change_callback((int(r.left()), int(r.top()), int(r.right()), int(r.bottom())))
         event.accept()
 
+    def nudge(self, dx: float, dy: float) -> bool:
+        """
+        Nudges the ROI box by (dx, dy) scene pixels, strictly clamping inside self.bounds.
+        Returns True if the box moved, False otherwise.
+        """
+        r = self.rect()
+        max_left = max(self.bounds.left(), self.bounds.right() - r.width())
+        new_left = max(self.bounds.left(), min(r.left() + dx, max_left))
+
+        max_top = max(self.bounds.top(), self.bounds.bottom() - r.height())
+        new_top = max(self.bounds.top(), min(r.top() + dy, max_top))
+
+        actual_dx = new_left - r.left()
+        actual_dy = new_top - r.top()
+
+        if abs(actual_dx) < 1e-4 and abs(actual_dy) < 1e-4:
+            return False
+
+        new_r = r.translated(actual_dx, actual_dy)
+        self.setRect(new_r)
+        self.update_handle_positions()
+        if self.on_change_callback:
+            norm_r = new_r.normalized()
+            self.on_change_callback((
+                int(norm_r.left()),
+                int(norm_r.top()),
+                int(norm_r.right()),
+                int(norm_r.bottom())
+            ))
+        return True
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            step = 10.0 if (event.modifiers() & Qt.ShiftModifier) else 1.0
+            dx, dy = 0.0, 0.0
+            if key == Qt.Key_Left:
+                dx = -step
+            elif key == Qt.Key_Right:
+                dx = step
+            elif key == Qt.Key_Up:
+                dy = -step
+            elif key == Qt.Key_Down:
+                dy = step
+            self.nudge(dx, dy)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
 
 class InteractiveCanvas(QGraphicsView):
     """
@@ -289,6 +338,7 @@ class InteractiveCanvas(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor(24, 24, 27)))
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.StrongFocus)
 
         self.pixmap_item: Optional[QGraphicsPixmapItem] = None
         self.roi_item: Optional[ROIRectItem] = None
@@ -409,6 +459,7 @@ class InteractiveCanvas(QGraphicsView):
             self.zoom(1.0 / 1.15)
 
     def mousePressEvent(self, event):
+        self.setFocus()
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier):
             self._is_panning = True
             self._pan_start = event.pos()
@@ -513,6 +564,25 @@ class InteractiveCanvas(QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.roi_item and self.pixmap_item:
+            key = event.key()
+            if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+                step = 10.0 if (event.modifiers() & Qt.ShiftModifier) else 1.0
+                dx, dy = 0.0, 0.0
+                if key == Qt.Key_Left:
+                    dx = -step
+                elif key == Qt.Key_Right:
+                    dx = step
+                elif key == Qt.Key_Up:
+                    dy = -step
+                elif key == Qt.Key_Down:
+                    dy = step
+                self.roi_item.nudge(dx, dy)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
