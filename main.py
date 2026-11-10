@@ -48,6 +48,30 @@ from canvas import InteractiveCanvas, pil_to_pixmap
 from print_studio import PrintStudioTab
 
 
+class NoWheelSlider(QSlider):
+    """QSlider that ignores mouse wheel events to prevent accidental value changes and allow parent scroll areas to scroll smoothly."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelSpinBox(QSpinBox):
+    """QSpinBox that ignores mouse wheel events to prevent accidental value changes."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that ignores mouse wheel events to prevent accidental dimension changes."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelComboBox(QComboBox):
+    """QComboBox that ignores mouse wheel events when closed to prevent accidental preset/unit switching while scrolling."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class SuperResWorker(QThread):
     """Background worker for non-blocking neural super-resolution inference."""
     finished = Signal(object)  # Emits enhanced PIL.Image
@@ -180,7 +204,7 @@ class PhotoStudioApp(QMainWindow):
         grp_preset_layout = QVBoxLayout(grp_preset)
         grp_preset_layout.setSpacing(5)
 
-        self.combo_presets = QComboBox()
+        self.combo_presets = NoWheelComboBox()
         for preset_name in PRESET_MAP.keys():
             self.combo_presets.addItem(preset_name)
         self.combo_presets.currentTextChanged.connect(self._on_preset_changed)
@@ -188,7 +212,7 @@ class PhotoStudioApp(QMainWindow):
 
         unit_row = QHBoxLayout()
         unit_row.addWidget(QLabel("Unit:"))
-        self.combo_unit = QComboBox()
+        self.combo_unit = NoWheelComboBox()
         self.combo_unit.addItems(["mm", "in", "px"])
         self.combo_unit.currentTextChanged.connect(self._on_unit_changed)
         unit_row.addWidget(self.combo_unit)
@@ -199,7 +223,7 @@ class PhotoStudioApp(QMainWindow):
         dim_grid.setSpacing(5)
 
         lbl_w = QLabel("Width:")
-        self.spin_custom_w = QDoubleSpinBox()
+        self.spin_custom_w = NoWheelDoubleSpinBox()
         self.spin_custom_w.setRange(5.0, 1000.0)
         self.spin_custom_w.setValue(35.0)
         self.spin_custom_w.setSingleStep(1.0)
@@ -208,7 +232,7 @@ class PhotoStudioApp(QMainWindow):
         self.spin_custom_w.valueChanged.connect(self._on_spinbox_dimension_changed)
 
         lbl_h = QLabel("Height:")
-        self.spin_custom_h = QDoubleSpinBox()
+        self.spin_custom_h = NoWheelDoubleSpinBox()
         self.spin_custom_h.setRange(5.0, 1000.0)
         self.spin_custom_h.setValue(45.0)
         self.spin_custom_h.setSingleStep(1.0)
@@ -321,7 +345,7 @@ class PhotoStudioApp(QMainWindow):
 
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Model:"))
-        self.combo_ai_model = QComboBox()
+        self.combo_ai_model = NoWheelComboBox()
         self.combo_ai_model.addItems(["RMBG-1.4 (High Precision)", "MODNet (Fast Portrait)"])
         self.combo_ai_model.currentTextChanged.connect(lambda _: self._trigger_render())
         model_row.addWidget(self.combo_ai_model)
@@ -329,7 +353,7 @@ class PhotoStudioApp(QMainWindow):
 
         backdrop_row = QHBoxLayout()
         backdrop_row.addWidget(QLabel("Backdrop:"))
-        self.combo_backdrop = QComboBox()
+        self.combo_backdrop = NoWheelComboBox()
         self.combo_backdrop.addItems([
             "Studio White", "Passport Grey", "Standard Blue",
             "Corporate Navy", "Soft Blur", "Custom Solid Color..."
@@ -352,7 +376,7 @@ class PhotoStudioApp(QMainWindow):
         lbl_choke_row.addWidget(self.lbl_choke_val)
         grp_ai_layout.addLayout(lbl_choke_row)
 
-        self.slider_choke = QSlider(Qt.Horizontal)
+        self.slider_choke = NoWheelSlider(Qt.Horizontal)
         self.slider_choke.setRange(0, 5)
         self.slider_choke.setValue(0)
         self.slider_choke.valueChanged.connect(self._on_choke_changed)
@@ -365,7 +389,7 @@ class PhotoStudioApp(QMainWindow):
         lbl_feather_row.addWidget(self.lbl_feather_val)
         grp_ai_layout.addLayout(lbl_feather_row)
 
-        self.slider_feather = QSlider(Qt.Horizontal)
+        self.slider_feather = NoWheelSlider(Qt.Horizontal)
         self.slider_feather.setRange(0, 50)
         self.slider_feather.setValue(0)
         self.slider_feather.valueChanged.connect(self._on_feather_changed)
@@ -386,7 +410,7 @@ class PhotoStudioApp(QMainWindow):
             header.addWidget(lbl_title)
             header.addStretch()
             header.addWidget(lbl_val)
-            slider = QSlider(Qt.Horizontal)
+            slider = NoWheelSlider(Qt.Horizontal)
             slider.setRange(min_v, max_v)
             slider.setValue(def_v)
             slider.valueChanged.connect(lambda v: lbl_val.setText(f"{v}{suffix}"))
@@ -442,7 +466,7 @@ class PhotoStudioApp(QMainWindow):
         # Scale Percentage SpinBox
         scale_row = QHBoxLayout()
         scale_row.addWidget(QLabel("Scale:"))
-        self.spin_rescale_pct = QSpinBox()
+        self.spin_rescale_pct = NoWheelSpinBox()
         self.spin_rescale_pct.setRange(rescaler.MIN_SCALE_PCT, rescaler.MAX_SCALE_PCT)
         self.spin_rescale_pct.setValue(100)
         self.spin_rescale_pct.setSingleStep(10)
