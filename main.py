@@ -22,12 +22,24 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QFileDialog, QColorDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
-    QGraphicsItem, QFrame, QStatusBar, QSizePolicy, QAbstractItemView
+    QGraphicsItem, QFrame, QStatusBar, QSizePolicy, QAbstractItemView,
+    QScrollArea, QGridLayout, QLayout
 )
 from PIL import Image
 
 import engine
 import printer
+
+
+PRESET_MAP = {
+    "Freeform / Original": None,
+    "Standard Passport (35 x 45 mm)": (35.0, 45.0),
+    "Indian Passport / US Visa (2 x 2 in)": (50.8, 50.8),
+    "PAN / ID Portrait (25 x 35 mm)": (25.0, 35.0),
+    "Indian Stamp Size (20 x 25 mm)": (20.0, 25.0),
+    "Standard ID Card (85.6 x 54 mm)": (85.6, 54.0),
+    "Custom Size": None,
+}
 
 
 def pil_to_pixmap(pil_img: Image.Image) -> QPixmap:
@@ -38,7 +50,7 @@ def pil_to_pixmap(pil_img: Image.Image) -> QPixmap:
 
 class ROIHandle(QGraphicsRectItem):
     """Interactive handle for resizing ROI rectangle."""
-    HANDLE_SIZE = 10.0
+    HANDLE_SIZE = 12.0
 
     def __init__(self, position_key: str, parent: 'ROIRectItem'):
         super().__init__(-self.HANDLE_SIZE / 2, -self.HANDLE_SIZE / 2, self.HANDLE_SIZE, self.HANDLE_SIZE, parent)
@@ -58,6 +70,27 @@ class ROIHandle(QGraphicsRectItem):
             "ml": Qt.SizeHorCursor,   "mr": Qt.SizeHorCursor,
         }
         self.setCursor(cursors.get(self.position_key, Qt.ArrowCursor))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.roi_parent.start_handle_drag(self.position_key, event.scenePos())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            self.roi_parent.continue_handle_drag(event.scenePos())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.roi_parent.end_handle_drag()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class ROIRectItem(QGraphicsRectItem):
@@ -107,48 +140,69 @@ class ROIRectItem(QGraphicsRectItem):
         for k, h in self.handles.items():
             h.setPos(positions[k])
 
+    def start_handle_drag(self, handle_key: str, scene_pos: QPointF):
+        self._active_handle = handle_key
+        self._is_dragging_rect = False
+        self._drag_start_scene = scene_pos
+        self._rect_at_drag_start = QRectF(self.rect())
+
+    def continue_handle_drag(self, scene_pos: QPointF):
+        if not self._active_handle:
+            return
+        delta = scene_pos - self._drag_start_scene
+        r = QRectF(self._rect_at_drag_start)
+        k = self._active_handle
+        left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
+
+        if "l" in k: left += delta.x()
+        if "r" in k: right += delta.x()
+        if "t" in k: top += delta.y()
+        if "b" in k: bottom += delta.y()
+
+        # Constrain to bounds with minimum 10px dimensions
+        left = max(self.bounds.left(), min(left, right - 10))
+        right = min(self.bounds.right(), max(right, left + 10))
+        top = max(self.bounds.top(), min(top, bottom - 10))
+        bottom = min(self.bounds.bottom(), max(bottom, top + 10))
+
+        new_r = QRectF(left, top, right - left, bottom - top)
+        self.setRect(new_r)
+        self.update_handle_positions()
+
+    def end_handle_drag(self):
+        self._active_handle = None
+        self._is_dragging_rect = False
+        if self.on_change_callback:
+            r = self.rect().normalized()
+            self.on_change_callback((int(r.left()), int(r.top()), int(r.right()), int(r.bottom())))
+
     def mousePressEvent(self, event):
         pos = event.pos()
         self._active_handle = None
+
+        # Check handles first
         for key, handle in self.handles.items():
             if handle.contains(handle.mapFromParent(pos)):
-                self._active_handle = key
-                break
+                self.start_handle_drag(key, event.scenePos())
+                event.accept()
+                return
 
         self._drag_start_scene = event.scenePos()
         self._rect_at_drag_start = self.rect()
 
-        if self._active_handle is None and self.contains(pos):
+        if self.contains(pos):
             self._is_dragging_rect = True
 
         event.accept()
 
     def mouseMoveEvent(self, event):
-        delta = event.scenePos() - self._drag_start_scene
-        r = QRectF(self._rect_at_drag_start)
-
         if self._active_handle:
-            k = self._active_handle
-            left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
-
-            if "l" in k: left += delta.x()
-            if "r" in k: right += delta.x()
-            if "t" in k: top += delta.y()
-            if "b" in k: bottom += delta.y()
-
-            # Constrain to bounds
-            left = max(self.bounds.left(), min(left, right - 10))
-            right = min(self.bounds.right(), max(right, left + 10))
-            top = max(self.bounds.top(), min(top, bottom - 10))
-            bottom = min(self.bounds.bottom(), max(bottom, top + 10))
-
-            new_r = QRectF(left, top, right - left, bottom - top)
-            self.setRect(new_r)
-            self.update_handle_positions()
+            self.continue_handle_drag(event.scenePos())
             event.accept()
             return
-
         elif self._is_dragging_rect:
+            delta = event.scenePos() - self._drag_start_scene
+            r = QRectF(self._rect_at_drag_start)
             dx = delta.x()
             dy = delta.y()
 
@@ -170,7 +224,8 @@ class ROIRectItem(QGraphicsRectItem):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        self._active_handle = None
+        if self._active_handle:
+            self.end_handle_drag()
         self._is_dragging_rect = False
         if self.on_change_callback:
             r = self.rect().normalized()
@@ -244,6 +299,36 @@ class InteractiveCanvas(QGraphicsView):
         if r.width() >= 10 and r.height() >= 10:
             self.roi_item = ROIRectItem(r, bounds, self._on_roi_modified)
             self.scene.addItem(self.roi_item)
+
+    def spawn_centered_box(self, aspect_ratio: Optional[float] = None) -> Optional[Tuple[int, int, int, int]]:
+        """Spawns an interactive box centered on the image with the specified aspect ratio."""
+        if not self.pixmap_item:
+            return None
+        bounds = QRectF(self.pixmap_item.pixmap().rect())
+        if bounds.width() < 20 or bounds.height() < 20:
+            return None
+
+        if aspect_ratio and aspect_ratio > 0:
+            avail_w = bounds.width() * 0.75
+            avail_h = bounds.height() * 0.75
+            if avail_w / avail_h > aspect_ratio:
+                box_h = avail_h
+                box_w = box_h * aspect_ratio
+            else:
+                box_w = avail_w
+                box_h = box_w / aspect_ratio
+        else:
+            box_w = bounds.width() * 0.65
+            box_h = bounds.height() * 0.65
+
+        x1 = max(0, int(bounds.center().x() - box_w / 2))
+        y1 = max(0, int(bounds.center().y() - box_h / 2))
+        x2 = min(int(bounds.width()), int(x1 + box_w))
+        y2 = min(int(bounds.height()), int(y1 + box_h))
+        box = (x1, y1, x2, y2)
+        self.set_roi_box(box)
+        self.roiChanged.emit(box)
+        return box
 
     def _on_roi_modified(self, box: Tuple[int, int, int, int]):
         self.roiChanged.emit(box)
@@ -387,6 +472,9 @@ class PhotoStudioApp(QMainWindow):
         self.current_photo_idx: int = -1
         self._block_signals: bool = False
         self._custom_bg_color: Tuple[int, int, int] = (255, 255, 255)
+        self._current_unit: str = "mm"
+        self._dim_w_mm: float = 35.0
+        self._dim_h_mm: float = 45.0
 
         # Print queue: List of {"image": PIL.Image, "width_mm": float, "height_mm": float, "copies": int, "label": str}
         self.print_queue: List[Dict[str, Any]] = []
@@ -420,29 +508,36 @@ class PhotoStudioApp(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(splitter)
 
-        # 1. Left Panel (Workspace & ROI Mode)
+        # 1. Left Panel (Workspace & ROI Mode) - Compact fixed width, NO horizontal scroll
         left_panel = QWidget()
+        left_panel.setFixedWidth(250)
+        left_panel.setMinimumWidth(240)
+        left_panel.setMaximumWidth(280)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
-        left_layout.setSpacing(6)
-        left_panel.setFixedWidth(280)
+        left_layout.setSpacing(5)
 
         # Photo list group
         grp_workspace = QGroupBox("📁 Photo Workspace")
         grp_workspace_layout = QVBoxLayout(grp_workspace)
-        grp_workspace_layout.setSpacing(6)
+        grp_workspace_layout.setSpacing(5)
 
         btn_row_1 = QHBoxLayout()
-        self.btn_add_photos = QPushButton("📂 Add Photo(s)")
+        btn_row_1.setSpacing(4)
+        self.btn_add_photos = QPushButton("📂 Add")
+        self.btn_add_photos.setToolTip("Open photo(s) from disk")
         self.btn_add_photos.clicked.connect(self._on_open_files)
-        self.btn_paste = QPushButton("📋 Paste (Ctrl+V)")
+        self.btn_paste = QPushButton("📋 Paste")
+        self.btn_paste.setToolTip("Paste image from clipboard (Ctrl+V)")
         self.btn_paste.clicked.connect(self._on_paste_clipboard)
         btn_row_1.addWidget(self.btn_add_photos)
         btn_row_1.addWidget(self.btn_paste)
         grp_workspace_layout.addLayout(btn_row_1)
 
         self.list_photos = QListWidget()
-        self.list_photos.setIconSize(QSize(48, 48))
+        self.list_photos.setIconSize(QSize(40, 40))
+        self.list_photos.setMinimumHeight(110)
+        self.list_photos.setMaximumHeight(150)
         self.list_photos.currentRowChanged.connect(self._on_photo_selected)
         grp_workspace_layout.addWidget(self.list_photos)
 
@@ -454,58 +549,81 @@ class PhotoStudioApp(QMainWindow):
         # Box Selection Mode
         grp_roi_mode = QGroupBox("🔲 Box Selection Mode")
         grp_roi_layout = QVBoxLayout(grp_roi_mode)
+        grp_roi_layout.setSpacing(3)
         self.bg_roi_mode = QButtonGroup(self)
 
-        self.radio_mode_whole = QRadioButton("Whole Image (Ignore Box)")
-        self.radio_mode_patch = QRadioButton("Edit Inside Box Only (Patch ID)")
-        self.radio_mode_crop = QRadioButton("Crop to Box (Extract Photo)")
+        self.radio_mode_whole = QRadioButton("Whole Image")
+        self.radio_mode_patch = QRadioButton("Edit Inside Box (Patch)")
+        self.radio_mode_crop = QRadioButton("Crop to Box (Extract)")
         self.radio_mode_whole.setChecked(True)
 
         self.bg_roi_mode.addButton(self.radio_mode_whole, 0)
         self.bg_roi_mode.addButton(self.radio_mode_patch, 1)
         self.bg_roi_mode.addButton(self.radio_mode_crop, 2)
-        self.bg_roi_mode.idClicked.connect(lambda _: self._trigger_render())
+        self.bg_roi_mode.idClicked.connect(self._on_roi_mode_changed)
 
         grp_roi_layout.addWidget(self.radio_mode_whole)
         grp_roi_layout.addWidget(self.radio_mode_patch)
         grp_roi_layout.addWidget(self.radio_mode_crop)
 
-        self.btn_bake_edit = QPushButton("✔️ Bake / Commit Edit to Image")
+        self.btn_bake_edit = QPushButton("✔️ Bake / Commit Edits")
         self.btn_bake_edit.setToolTip("Permanently commits current patch or lighting into image base")
         self.btn_bake_edit.clicked.connect(self._on_bake_edit)
         grp_roi_layout.addWidget(self.btn_bake_edit)
         left_layout.addWidget(grp_roi_mode)
 
-        # Physical Preset Sizes
-        grp_preset = QGroupBox("📏 Physical Output Size")
+        # Crop & Physical Preset Sizes
+        grp_preset = QGroupBox("📏 Crop && Physical Sizing")
         grp_preset_layout = QVBoxLayout(grp_preset)
+        grp_preset_layout.setSpacing(5)
 
         self.combo_presets = QComboBox()
-        for preset_name in engine.PRESET_SIZES.keys():
+        for preset_name in PRESET_MAP.keys():
             self.combo_presets.addItem(preset_name)
         self.combo_presets.currentTextChanged.connect(self._on_preset_changed)
         grp_preset_layout.addWidget(self.combo_presets)
 
-        custom_row = QHBoxLayout()
-        custom_row.addWidget(QLabel("W (mm):"))
+        unit_row = QHBoxLayout()
+        unit_row.addWidget(QLabel("Unit:"))
+        self.combo_unit = QComboBox()
+        self.combo_unit.addItems(["mm", "in", "px"])
+        self.combo_unit.currentTextChanged.connect(self._on_unit_changed)
+        unit_row.addWidget(self.combo_unit)
+        grp_preset_layout.addLayout(unit_row)
+
+        dim_grid = QGridLayout()
+        dim_grid.setContentsMargins(0, 2, 0, 0)
+        dim_grid.setSpacing(5)
+
+        lbl_w = QLabel("Width:")
         self.spin_custom_w = QDoubleSpinBox()
-        self.spin_custom_w.setRange(5.0, 300.0)
+        self.spin_custom_w.setRange(5.0, 1000.0)
         self.spin_custom_w.setValue(35.0)
         self.spin_custom_w.setSingleStep(1.0)
-        self.spin_custom_w.setEnabled(False)
-        self.spin_custom_w.valueChanged.connect(lambda _: self._trigger_render())
-        custom_row.addWidget(self.spin_custom_w)
+        self.spin_custom_w.setDecimals(1)
+        self.spin_custom_w.setSuffix(" mm")
+        self.spin_custom_w.valueChanged.connect(self._on_spinbox_dimension_changed)
 
-        custom_row.addWidget(QLabel("H (mm):"))
+        lbl_h = QLabel("Height:")
         self.spin_custom_h = QDoubleSpinBox()
-        self.spin_custom_h.setRange(5.0, 300.0)
+        self.spin_custom_h.setRange(5.0, 1000.0)
         self.spin_custom_h.setValue(45.0)
         self.spin_custom_h.setSingleStep(1.0)
-        self.spin_custom_h.setEnabled(False)
-        self.spin_custom_h.valueChanged.connect(lambda _: self._trigger_render())
-        custom_row.addWidget(self.spin_custom_h)
+        self.spin_custom_h.setDecimals(1)
+        self.spin_custom_h.setSuffix(" mm")
+        self.spin_custom_h.valueChanged.connect(self._on_spinbox_dimension_changed)
 
-        grp_preset_layout.addLayout(custom_row)
+        dim_grid.addWidget(lbl_w, 0, 0)
+        dim_grid.addWidget(self.spin_custom_w, 0, 1)
+        dim_grid.addWidget(lbl_h, 1, 0)
+        dim_grid.addWidget(self.spin_custom_h, 1, 1)
+        grp_preset_layout.addLayout(dim_grid)
+
+        self.btn_apply_crop = QPushButton("✂️ Apply Crop / Dimensions")
+        self.btn_apply_crop.setObjectName("btn_apply_crop")
+        self.btn_apply_crop.clicked.connect(self._on_apply_crop)
+        grp_preset_layout.addWidget(self.btn_apply_crop)
+
         left_layout.addWidget(grp_preset)
         left_layout.addStretch()
 
@@ -513,24 +631,46 @@ class PhotoStudioApp(QMainWindow):
 
         # 2. Center Panel (Interactive Canvas + Top Toolbar)
         center_panel = QWidget()
+        center_panel.setMinimumWidth(380)
         center_layout = QVBoxLayout(center_panel)
         center_layout.setContentsMargins(4, 4, 4, 4)
         center_layout.setSpacing(6)
 
-        # Toolbar
+        # Top Toolbar - clean, non-clipped labels with full tooltips
         toolbar = QHBoxLayout()
-        self.btn_zoom_in = QPushButton("🔍+ Zoom In")
+        toolbar.setSpacing(6)
+
+        self.btn_zoom_in = QPushButton("🔍+ In")
+        self.btn_zoom_in.setToolTip("Zoom In (Mouse Wheel Up)")
         self.btn_zoom_in.clicked.connect(lambda: self.canvas.zoom(1.2))
-        self.btn_zoom_out = QPushButton("🔍- Zoom Out")
+
+        self.btn_zoom_out = QPushButton("🔍- Out")
+        self.btn_zoom_out.setToolTip("Zoom Out (Mouse Wheel Down)")
         self.btn_zoom_out.clicked.connect(lambda: self.canvas.zoom(1 / 1.2))
-        self.btn_fit = QPushButton("📐 Fit to Window")
+
+        self.btn_fit = QPushButton("📐 Fit")
+        self.btn_fit.setToolTip("Fit Image to Window")
         self.btn_fit.clicked.connect(lambda: self.canvas.fit_image())
-        self.btn_rotate = QPushButton("🔄 Rotate 90° CW")
+
+        self.btn_rotate = QPushButton("🔄 Rotate")
+        self.btn_rotate.setToolTip("Rotate 90° Clockwise")
         self.btn_rotate.clicked.connect(self._on_rotate_90)
+
         self.btn_reset_roi = QPushButton("⬜ Reset Box")
+        self.btn_reset_roi.setToolTip("Reset / Clear Selection Box")
         self.btn_reset_roi.clicked.connect(self._on_reset_roi)
 
-        self.btn_compare = QPushButton("👁️ Hold to Compare Original")
+        self.btn_undo = QPushButton("↩️ Undo")
+        self.btn_undo.setToolTip("Undo Last Action / Crop (Ctrl+Z)")
+        self.btn_undo.clicked.connect(self._on_undo)
+        self.btn_undo.setEnabled(False)
+
+        self.btn_revert = QPushButton("⏮️ Revert")
+        self.btn_revert.setToolTip("Revert Photo to Pristine Original State")
+        self.btn_revert.clicked.connect(self._on_revert_to_original)
+
+        self.btn_compare = QPushButton("👁️ Compare")
+        self.btn_compare.setToolTip("Hold to Compare Original (Unedited) Photo")
         self.btn_compare.pressed.connect(self._on_compare_pressed)
         self.btn_compare.released.connect(self._on_compare_released)
 
@@ -539,6 +679,8 @@ class PhotoStudioApp(QMainWindow):
         toolbar.addWidget(self.btn_fit)
         toolbar.addWidget(self.btn_rotate)
         toolbar.addWidget(self.btn_reset_roi)
+        toolbar.addWidget(self.btn_undo)
+        toolbar.addWidget(self.btn_revert)
         toolbar.addWidget(self.btn_compare)
         toolbar.addStretch()
         center_layout.addLayout(toolbar)
@@ -551,17 +693,19 @@ class PhotoStudioApp(QMainWindow):
 
         splitter.addWidget(center_panel)
 
-        # 3. Right Panel (AI Segmentation & Lighting)
+        # 3. Right Panel (AI Segmentation & Lighting) - Compact fixed width
         right_panel = QWidget()
+        right_panel.setFixedWidth(260)
+        right_panel.setMinimumWidth(250)
+        right_panel.setMaximumWidth(285)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(4, 4, 4, 4)
-        right_layout.setSpacing(6)
-        right_panel.setFixedWidth(320)
+        right_layout.setSpacing(5)
 
         # AI Background Group
         grp_ai = QGroupBox("🤖 AI Background Removal")
         grp_ai_layout = QVBoxLayout(grp_ai)
-        grp_ai_layout.setSpacing(6)
+        grp_ai_layout.setSpacing(4)
 
         self.chk_remove_bg = QCheckBox("Enable AI Background Removal")
         self.chk_remove_bg.setChecked(False)
@@ -588,13 +732,15 @@ class PhotoStudioApp(QMainWindow):
         grp_ai_layout.addLayout(backdrop_row)
 
         self.btn_pick_color = QPushButton("🎨 Pick Custom Color")
+        self.btn_pick_color.setObjectName("btn_pick_color")
         self.btn_pick_color.setEnabled(False)
         self.btn_pick_color.clicked.connect(self._on_pick_custom_color)
         grp_ai_layout.addWidget(self.btn_pick_color)
 
-        # Edge refinement
+        # Edge refinement - full sliders with reduced panel length
         lbl_choke_row = QHBoxLayout()
         lbl_choke_row.addWidget(QLabel("Edge Choke (Halo Cut):"))
+        lbl_choke_row.addStretch()
         self.lbl_choke_val = QLabel("0 px")
         lbl_choke_row.addWidget(self.lbl_choke_val)
         grp_ai_layout.addLayout(lbl_choke_row)
@@ -607,6 +753,7 @@ class PhotoStudioApp(QMainWindow):
 
         lbl_feather_row = QHBoxLayout()
         lbl_feather_row.addWidget(QLabel("Edge Feather (Softness):"))
+        lbl_feather_row.addStretch()
         self.lbl_feather_val = QLabel("0.0 px")
         lbl_feather_row.addWidget(self.lbl_feather_val)
         grp_ai_layout.addLayout(lbl_feather_row)
@@ -619,12 +766,12 @@ class PhotoStudioApp(QMainWindow):
 
         right_layout.addWidget(grp_ai)
 
-        # Lighting & Color Adjustments Group
-        grp_lighting = QGroupBox("☀️ Lighting & Color Grading")
+        # Lighting & Color Adjustments Group - full sliders with reduced panel length
+        grp_lighting = QGroupBox("☀️ Lighting && Color Grading")
         grp_lighting_layout = QVBoxLayout(grp_lighting)
-        grp_lighting_layout.setSpacing(4)
+        grp_lighting_layout.setSpacing(3)
 
-        # Helper to create slider rows
+        # Helper to create slider rows (title + value header, slider beneath)
         def create_slider(name: str, min_v: int, max_v: int, def_v: int, suffix: str = "%"):
             header = QHBoxLayout()
             lbl_title = QLabel(name)
@@ -659,28 +806,46 @@ class PhotoStudioApp(QMainWindow):
         right_layout.addWidget(self.btn_save_photo)
 
         self.btn_send_queue = QPushButton("➕ Send to A4 Print Queue")
-        self.btn_send_queue.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 8px;")
+        self.btn_send_queue.setObjectName("btn_send_queue")
         self.btn_send_queue.clicked.connect(self._on_send_to_print_queue)
         right_layout.addWidget(self.btn_send_queue)
 
         right_layout.addStretch()
         splitter.addWidget(right_panel)
 
-        splitter.setSizes([280, 720, 320])
+        # Configure splitter behavior: fixed side panes, center expands
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        splitter.setCollapsible(2, False)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([250, 835, 255])
 
     def _build_printer_tab(self, parent_widget: QWidget):
         layout = QHBoxLayout(parent_widget)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # Left: Queue & Layout settings
+        # Left: Queue & Layout settings - wrapped in QScrollArea with minimum height
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        left_scroll.setFixedWidth(380)
+        left_scroll.verticalScrollBar().setSingleStep(25)
+
         left_panel = QWidget()
+        left_panel.setMinimumHeight(600)
         left_layout = QVBoxLayout(left_panel)
-        left_panel.setFixedWidth(360)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        left_layout.setContentsMargins(4, 4, 14, 8)
+        left_layout.setSpacing(6)
 
         grp_queue = QGroupBox("📋 A4 Print Queue")
         grp_queue_layout = QVBoxLayout(grp_queue)
+        grp_queue_layout.setSpacing(5)
 
         self.tbl_queue = QTableWidget(0, 4)
         self.tbl_queue.setHorizontalHeaderLabels(["Preview", "Size (mm)", "Copies", "Action"])
@@ -689,6 +854,8 @@ class PhotoStudioApp(QMainWindow):
         self.tbl_queue.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tbl_queue.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.tbl_queue.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl_queue.setMinimumHeight(110)
+        self.tbl_queue.setMaximumHeight(160)
         grp_queue_layout.addWidget(self.tbl_queue)
 
         self.btn_clear_queue = QPushButton("🗑️ Clear Entire Queue")
@@ -698,6 +865,7 @@ class PhotoStudioApp(QMainWindow):
 
         grp_layout_settings = QGroupBox("📐 A4 Page Layout Settings")
         grp_settings_layout = QVBoxLayout(grp_layout_settings)
+        grp_settings_layout.setSpacing(4)
 
         margin_row = QHBoxLayout()
         margin_row.addWidget(QLabel("Page Margin (mm):"))
@@ -705,6 +873,7 @@ class PhotoStudioApp(QMainWindow):
         self.spin_margin.setRange(0.0, 30.0)
         self.spin_margin.setValue(10.0)
         self.spin_margin.setSingleStep(1.0)
+        self.spin_margin.setSuffix(" mm")
         self.spin_margin.valueChanged.connect(self._regenerate_a4_preview)
         margin_row.addWidget(self.spin_margin)
         grp_settings_layout.addLayout(margin_row)
@@ -715,6 +884,7 @@ class PhotoStudioApp(QMainWindow):
         self.spin_gap.setRange(0.0, 20.0)
         self.spin_gap.setValue(2.0)
         self.spin_gap.setSingleStep(0.5)
+        self.spin_gap.setSuffix(" mm")
         self.spin_gap.valueChanged.connect(self._regenerate_a4_preview)
         gap_row.addWidget(self.spin_gap)
         grp_settings_layout.addLayout(gap_row)
@@ -729,14 +899,14 @@ class PhotoStudioApp(QMainWindow):
         grp_settings_layout.addWidget(self.lbl_queue_status)
 
         left_layout.addWidget(grp_layout_settings)
-        left_layout.addStretch()
 
-        # Primary Output Bar
-        grp_output = QGroupBox("🖨️ Hardware Printing & Export")
+        # Primary Output Bar - stacked directly below settings, then stretch
+        grp_output = QGroupBox("🖨️ Hardware Printing && Export")
         grp_output_layout = QVBoxLayout(grp_output)
+        grp_output_layout.setSpacing(5)
 
         self.btn_print_hw = QPushButton("🖨️ Print Directly (1:1 Hardware A4)")
-        self.btn_print_hw.setStyleSheet("background-color: #16a34a; color: white; font-weight: bold; padding: 10px;")
+        self.btn_print_hw.setObjectName("btn_print_hw")
         self.btn_print_hw.clicked.connect(self._on_print_hardware)
         grp_output_layout.addWidget(self.btn_print_hw)
 
@@ -749,7 +919,11 @@ class PhotoStudioApp(QMainWindow):
         grp_output_layout.addWidget(self.btn_export_pdf)
 
         left_layout.addWidget(grp_output)
-        layout.addWidget(left_panel)
+        left_layout.addSpacing(20)
+        left_layout.addStretch()
+
+        left_scroll.setWidget(left_panel)
+        layout.addWidget(left_scroll)
 
         # Right: Live A4 Preview
         right_panel = QWidget()
@@ -767,12 +941,16 @@ class PhotoStudioApp(QMainWindow):
         paste_shortcut = QShortcut(QKeySequence.Paste, self)
         paste_shortcut.activated.connect(self._on_paste_clipboard)
 
+        # Global Ctrl+Z undo shortcut
+        undo_shortcut = QShortcut(QKeySequence.Undo, self)
+        undo_shortcut.activated.connect(self._on_undo)
+
     def _apply_dark_style(self):
         dark_qss = """
         QMainWindow, QWidget {
             background-color: #18181b;
             color: #f4f4f5;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Segoe UI', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
             font-size: 13px;
         }
         QGroupBox {
@@ -795,6 +973,7 @@ class PhotoStudioApp(QMainWindow):
             border-radius: 4px;
             padding: 5px 10px;
             color: #f4f4f5;
+            min-height: 24px;
         }
         QPushButton:hover {
             background-color: #3f3f46;
@@ -805,15 +984,73 @@ class PhotoStudioApp(QMainWindow):
         }
         QPushButton:disabled {
             background-color: #1f1f23;
+            color: #a1a1aa;
+            border-color: #27272a;
+        }
+        QPushButton#btn_send_queue {
+            background-color: #0284c7;
+            color: #ffffff;
+            font-weight: bold;
+            border: 1px solid #38bdf8;
+            border-radius: 4px;
+            padding: 8px 12px;
+        }
+        QPushButton#btn_send_queue:hover {
+            background-color: #0369a1;
+        }
+        QPushButton#btn_send_queue:pressed {
+            background-color: #075985;
+        }
+        QPushButton#btn_apply_crop {
+            background-color: #d97706;
+            color: #ffffff;
+            font-weight: bold;
+            border: 1px solid #f59e0b;
+            border-radius: 4px;
+            padding: 6px 10px;
+        }
+        QPushButton#btn_apply_crop:hover {
+            background-color: #b45309;
+        }
+        QPushButton#btn_apply_crop:pressed {
+            background-color: #92400e;
+        }
+        QPushButton#btn_apply_crop:disabled {
+            background-color: #27272a;
             color: #71717a;
+            border-color: #3f3f46;
+        }
+        QPushButton#btn_print_hw {
+            background-color: #16a34a;
+            color: #ffffff;
+            font-weight: bold;
+            border: 1px solid #22c55e;
+            border-radius: 4px;
+            padding: 10px 14px;
+        }
+        QPushButton#btn_print_hw:hover {
+            background-color: #15803d;
+        }
+        QPushButton#btn_print_hw:pressed {
+            background-color: #166534;
+        }
+        QPushButton#btn_pick_color {
+            background-color: #2563eb;
+            color: #ffffff;
+            font-weight: bold;
+        }
+        QPushButton#btn_pick_color:disabled {
+            background-color: #1f1f23;
+            color: #a1a1aa;
             border-color: #27272a;
         }
         QComboBox, QSpinBox, QDoubleSpinBox {
             background-color: #27272a;
             border: 1px solid #3f3f46;
             border-radius: 4px;
-            padding: 4px;
+            padding: 3px 6px;
             color: #f4f4f5;
+            min-height: 22px;
         }
         QComboBox::drop-down {
             border: none;
@@ -872,6 +1109,50 @@ class PhotoStudioApp(QMainWindow):
             background-color: #121214;
             color: #a1a1aa;
         }
+        QScrollArea {
+            border: none;
+            background-color: transparent;
+        }
+        QScrollBar:vertical {
+            background-color: #27272a;
+            width: 12px;
+            margin: 0px;
+            border-radius: 6px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #52525b;
+            min-height: 30px;
+            border-radius: 6px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background-color: #71717a;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            background: none;
+        }
+        QScrollBar:horizontal {
+            background-color: #18181b;
+            height: 10px;
+            margin: 0px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #3f3f46;
+            min-width: 25px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:horizontal:hover {
+            background-color: #52525b;
+        }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            width: 0px;
+        }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+            background: none;
+        }
         """
         self.setStyleSheet(dark_qss)
 
@@ -927,11 +1208,15 @@ class PhotoStudioApp(QMainWindow):
         item_data = {
             "id": idx,
             "name": name,
+            "orig_initial": img.copy(),
             "orig": img.copy(),
             "baked": img.copy(),
             "processed": img.copy(),
             "roi": None,
-            "params": self._get_current_params()
+            "target_w_mm": None,
+            "target_h_mm": None,
+            "params": self._get_current_params(),
+            "history": []
         }
         self.workspace_photos.append(item_data)
 
@@ -977,13 +1262,128 @@ class PhotoStudioApp(QMainWindow):
 
         self._trigger_render()
         self.canvas.fit_image()
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(len(item.get("history", [])) > 0)
+
+    def _push_undo_snapshot(self, item: Dict[str, Any], desc: str):
+        """Pushes a deep snapshot of the current photo state into its undo history stack."""
+        snapshot = {
+            "baked": item["baked"].copy(),
+            "orig": item["orig"].copy(),
+            "roi": item.get("roi"),
+            "target_w_mm": item.get("target_w_mm"),
+            "target_h_mm": item.get("target_h_mm"),
+            "dim_w_mm": self._dim_w_mm,
+            "dim_h_mm": self._dim_h_mm,
+            "current_unit": self._current_unit,
+            "preset": self.combo_presets.currentText(),
+            "desc": desc,
+        }
+        item.setdefault("history", []).append(snapshot)
+        if len(item["history"]) > 25:
+            item["history"].pop(0)
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(True)
+
+    def _on_undo(self):
+        """Reverts the last crop, rotation, or bake operation for the current photo."""
+        if self.current_photo_idx < 0:
+            return
+        item = self.workspace_photos[self.current_photo_idx]
+        history = item.get("history", [])
+        if not history:
+            self.statusBar().showMessage("Nothing to undo for this photo.", 3000)
+            if hasattr(self, "btn_undo"):
+                self.btn_undo.setEnabled(False)
+            return
+
+        snapshot = history.pop()
+        item["baked"] = snapshot["baked"]
+        item["orig"] = snapshot["orig"]
+        item["roi"] = snapshot["roi"]
+        item["target_w_mm"] = snapshot["target_w_mm"]
+        item["target_h_mm"] = snapshot["target_h_mm"]
+        self._dim_w_mm = snapshot["dim_w_mm"]
+        self._dim_h_mm = snapshot["dim_h_mm"]
+
+        self._block_signals = True
+        try:
+            if snapshot.get("current_unit"):
+                self._current_unit = snapshot["current_unit"]
+                self.combo_unit.setCurrentText(self._current_unit)
+            unit_w = self._convert_mm_to_unit(self._dim_w_mm, self._current_unit)
+            unit_h = self._convert_mm_to_unit(self._dim_h_mm, self._current_unit)
+            self.spin_custom_w.setValue(unit_w)
+            self.spin_custom_h.setValue(unit_h)
+            if snapshot.get("preset"):
+                self.combo_presets.setCurrentText(snapshot["preset"])
+            if item["roi"]:
+                self.canvas.set_roi_box(item["roi"])
+                self.radio_mode_crop.setChecked(True)
+                self.btn_apply_crop.setEnabled(True)
+            else:
+                self.canvas.set_roi_box(None)
+                self.radio_mode_whole.setChecked(True)
+                self.btn_apply_crop.setEnabled(False)
+        finally:
+            self._block_signals = False
+
+        # Refresh thumbnail in workspace list
+        thumb = item["baked"].copy()
+        thumb.thumbnail((40, 40), Image.BILINEAR)
+        list_item = self.list_photos.item(self.current_photo_idx)
+        if list_item:
+            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
+        self._trigger_render()
+        self.canvas.fit_image()
+        self.statusBar().showMessage(f"↩️ Undid: {snapshot['desc']}", 4000)
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(len(history) > 0)
+
+    def _on_revert_to_original(self):
+        """Restores the current photo back to its pristine, unedited initial state."""
+        if self.current_photo_idx < 0:
+            return
+        item = self.workspace_photos[self.current_photo_idx]
+        orig_init = item.get("orig_initial")
+        if orig_init is None:
+            orig_init = item["orig"]
+
+        # Push to undo history first so revert itself can be undone
+        self._push_undo_snapshot(item, "Revert to Original")
+
+        item["baked"] = orig_init.copy()
+        item["orig"] = orig_init.copy()
+        item["roi"] = None
+        item["target_w_mm"] = None
+        item["target_h_mm"] = None
+
+        self._block_signals = True
+        try:
+            self.canvas.set_roi_box(None)
+            self.radio_mode_whole.setChecked(True)
+            self.btn_apply_crop.setEnabled(False)
+            self.combo_presets.setCurrentText("Freeform / Original")
+        finally:
+            self._block_signals = False
+
+        thumb = item["baked"].copy()
+        thumb.thumbnail((40, 40), Image.BILINEAR)
+        list_item = self.list_photos.item(self.current_photo_idx)
+        if list_item:
+            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
+        self._trigger_render()
+        self.canvas.fit_image()
+        self.statusBar().showMessage("⏮️ Reverted photo to initial unedited state.", 5000)
 
     def _on_bake_edit(self):
         if self.current_photo_idx < 0:
             return
         item = self.workspace_photos[self.current_photo_idx]
         if item.get("processed"):
-            # Update baked image to current output
+            self._push_undo_snapshot(item, "Bake Edits")
             item["baked"] = item["processed"].copy()
             item["roi"] = None
             self.canvas.set_pixmap(pil_to_pixmap(item["baked"]), keep_roi=False)
@@ -1010,11 +1410,14 @@ class PhotoStudioApp(QMainWindow):
         if self.current_photo_idx < 0:
             return
         item = self.workspace_photos[self.current_photo_idx]
+        self._push_undo_snapshot(item, "Rotate 90°")
         item["baked"] = item["baked"].rotate(-90, expand=True)
         item["roi"] = None
         self.canvas.set_pixmap(pil_to_pixmap(item["baked"]), keep_roi=False)
         self._trigger_render()
         self.canvas.fit_image()
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(len(item.get("history", [])) > 0)
 
     def _on_compare_pressed(self):
         if self.current_photo_idx >= 0:
@@ -1028,14 +1431,209 @@ class PhotoStudioApp(QMainWindow):
                 self.canvas.set_pixmap(pil_to_pixmap(proc), keep_roi=True)
 
     # -------------------------------------------------------------------------
-    # Settings & Parameter Handlers
+    # Settings, Presets, Units & Dimension Handlers
     # -------------------------------------------------------------------------
 
+    def _get_current_dimensions_in_mm(self) -> Tuple[float, float]:
+        """Returns the current width and height in millimeters."""
+        return (self._dim_w_mm, self._dim_h_mm)
+
+    def _convert_mm_to_unit(self, val_mm: float, target_unit: str) -> float:
+        """Converts millimeters to target unit (mm, in, or px)."""
+        if target_unit == "in":
+            return round(val_mm / 25.4, 2)
+        elif target_unit == "px":
+            return float(round(val_mm * engine.PX_PER_MM))
+        else:
+            return round(val_mm, 1)
+
+    def _convert_unit_to_mm(self, val: float, source_unit: str) -> float:
+        """Converts value from source unit to millimeters."""
+        if source_unit == "in":
+            return val * 25.4
+        elif source_unit == "px":
+            return val / engine.PX_PER_MM
+        else:
+            return val
+
+    def _on_unit_changed(self, new_unit: str):
+        if new_unit == self._current_unit:
+            return
+
+        new_w = self._convert_mm_to_unit(self._dim_w_mm, new_unit)
+        new_h = self._convert_mm_to_unit(self._dim_h_mm, new_unit)
+
+        self._block_signals = True
+        try:
+            if new_unit == "in":
+                self.spin_custom_w.setDecimals(2)
+                self.spin_custom_h.setDecimals(2)
+                self.spin_custom_w.setSingleStep(0.1)
+                self.spin_custom_h.setSingleStep(0.1)
+                self.spin_custom_w.setRange(0.2, 50.0)
+                self.spin_custom_h.setRange(0.2, 50.0)
+                self.spin_custom_w.setSuffix(" in")
+                self.spin_custom_h.setSuffix(" in")
+            elif new_unit == "px":
+                self.spin_custom_w.setDecimals(0)
+                self.spin_custom_h.setDecimals(0)
+                self.spin_custom_w.setSingleStep(10.0)
+                self.spin_custom_h.setSingleStep(10.0)
+                self.spin_custom_w.setRange(20.0, 10000.0)
+                self.spin_custom_h.setRange(20.0, 10000.0)
+                self.spin_custom_w.setSuffix(" px")
+                self.spin_custom_h.setSuffix(" px")
+            else:  # "mm"
+                self.spin_custom_w.setDecimals(1)
+                self.spin_custom_h.setDecimals(1)
+                self.spin_custom_w.setSingleStep(1.0)
+                self.spin_custom_h.setSingleStep(1.0)
+                self.spin_custom_w.setRange(5.0, 1000.0)
+                self.spin_custom_h.setRange(5.0, 1000.0)
+                self.spin_custom_w.setSuffix(" mm")
+                self.spin_custom_h.setSuffix(" mm")
+
+            self.spin_custom_w.setValue(new_w)
+            self.spin_custom_h.setValue(new_h)
+            self._current_unit = new_unit
+        finally:
+            self._block_signals = False
+
     def _on_preset_changed(self, text: str):
-        is_custom = (text == "Custom Size (mm)")
-        self.spin_custom_w.setEnabled(is_custom)
-        self.spin_custom_h.setEnabled(is_custom)
-        self._trigger_render()
+        if self._block_signals:
+            return
+
+        dims_mm = PRESET_MAP.get(text)
+        if dims_mm is not None:
+            w_mm, h_mm = dims_mm
+            self._dim_w_mm = w_mm
+            self._dim_h_mm = h_mm
+            unit_w = self._convert_mm_to_unit(w_mm, self._current_unit)
+            unit_h = self._convert_mm_to_unit(h_mm, self._current_unit)
+
+            self._block_signals = True
+            try:
+                self.spin_custom_w.setValue(unit_w)
+                self.spin_custom_h.setValue(unit_h)
+                self.radio_mode_crop.setChecked(True)
+            finally:
+                self._block_signals = False
+
+            self.btn_apply_crop.setEnabled(True)
+            aspect = w_mm / h_mm if h_mm > 0 else 1.0
+            self.canvas.spawn_centered_box(aspect_ratio=aspect)
+            self.statusBar().showMessage(
+                f"Preset loaded: {text} ({w_mm:.1f} x {h_mm:.1f} mm). Frame with box, then click Apply Crop.",
+                5000
+            )
+        elif text == "Freeform / Original":
+            self.canvas.set_roi_box(None)
+            self.radio_mode_whole.setChecked(True)
+            self.btn_apply_crop.setEnabled(False)
+            self.statusBar().showMessage("Freeform: Whole image selected.", 3000)
+            self._trigger_render()
+        elif text == "Custom Size":
+            self.radio_mode_crop.setChecked(True)
+            self.btn_apply_crop.setEnabled(True)
+            w_mm, h_mm = self._get_current_dimensions_in_mm()
+            aspect = w_mm / h_mm if h_mm > 0 else 1.0
+            if not self.canvas.get_roi_box():
+                self.canvas.spawn_centered_box(aspect_ratio=aspect)
+
+    def _on_spinbox_dimension_changed(self):
+        if self._block_signals:
+            return
+
+        w_val = self.spin_custom_w.value()
+        h_val = self.spin_custom_h.value()
+        self._dim_w_mm = self._convert_unit_to_mm(w_val, self._current_unit)
+        self._dim_h_mm = self._convert_unit_to_mm(h_val, self._current_unit)
+
+        if self.combo_presets.currentText() != "Custom Size":
+            self._block_signals = True
+            try:
+                self.combo_presets.setCurrentText("Custom Size")
+            finally:
+                self._block_signals = False
+
+        self.radio_mode_crop.setChecked(True)
+        self.btn_apply_crop.setEnabled(True)
+
+        if self._dim_w_mm > 0 and self._dim_h_mm > 0:
+            aspect = self._dim_w_mm / self._dim_h_mm
+            if not self.canvas.get_roi_box():
+                self.canvas.spawn_centered_box(aspect_ratio=aspect)
+
+    def _on_roi_mode_changed(self, mode_id: int):
+        if self._block_signals:
+            return
+
+        if mode_id == 0:  # Whole Image
+            self.canvas.set_roi_box(None)
+            self.btn_apply_crop.setEnabled(False)
+            self._trigger_render()
+        elif mode_id == 1:  # Patch ID
+            if not self.canvas.get_roi_box():
+                self.canvas.spawn_centered_box(aspect_ratio=None)
+            self.btn_apply_crop.setEnabled(False)
+            self._trigger_render()
+        elif mode_id == 2:  # Crop to Box
+            if not self.canvas.get_roi_box():
+                w_mm, h_mm = self._get_current_dimensions_in_mm()
+                aspect = w_mm / h_mm if h_mm > 0 else 1.0
+                self.canvas.spawn_centered_box(aspect_ratio=aspect)
+            self.btn_apply_crop.setEnabled(True)
+            self._trigger_render()
+
+    def _on_apply_crop(self):
+        if self.current_photo_idx < 0:
+            QMessageBox.information(self, "No Photo", "Please add or select a photo first.")
+            return
+
+        item = self.workspace_photos[self.current_photo_idx]
+        roi_box = self.canvas.get_roi_box()
+        if not roi_box:
+            w, h = item["baked"].size
+            roi_box = (0, 0, w, h)
+
+        w_mm, h_mm = self._get_current_dimensions_in_mm()
+        target_w_px = int(round(w_mm * engine.PX_PER_MM))
+        target_h_px = int(round(h_mm * engine.PX_PER_MM))
+        target_px = (target_w_px, target_h_px) if (target_w_px > 0 and target_h_px > 0) else None
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._push_undo_snapshot(item, f"Crop to {w_mm:.1f}x{h_mm:.1f} mm")
+            item["baked"] = engine.crop_and_resize(item["baked"], roi_box, target_px)
+            item["orig"] = engine.crop_and_resize(item["orig"], roi_box, target_px)
+            item["target_w_mm"] = w_mm
+            item["target_h_mm"] = h_mm
+            item["roi"] = None
+
+            thumb = item["baked"].copy()
+            thumb.thumbnail((40, 40), Image.BILINEAR)
+            list_item = self.list_photos.item(self.current_photo_idx)
+            if list_item:
+                list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
+            self._block_signals = True
+            try:
+                self.canvas.set_roi_box(None)
+                self.radio_mode_whole.setChecked(True)
+            finally:
+                self._block_signals = False
+
+            self._trigger_render()
+            self.canvas.fit_image()
+
+            self.statusBar().showMessage(
+                f"✂️ Cropped photo to {w_mm:.1f} x {h_mm:.1f} mm ({item['baked'].width} x {item['baked'].height} px)",
+                5000
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Crop Error", f"Failed to crop image:\n{e}")
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _on_ai_toggled(self, checked: bool):
         self.combo_ai_model.setEnabled(checked)
@@ -1082,6 +1680,7 @@ class PhotoStudioApp(QMainWindow):
         self._trigger_render()
 
     def _get_current_params(self) -> Dict[str, Any]:
+        w_mm, h_mm = self._get_current_dimensions_in_mm()
         return {
             "remove_bg": self.chk_remove_bg.isChecked(),
             "ai_model": "RMBG-1.4" if "RMBG" in self.combo_ai_model.currentText() else "MODNet",
@@ -1095,8 +1694,8 @@ class PhotoStudioApp(QMainWindow):
             "sharpness": self.slider_sharp.value() / 100.0,
             "warmth": self.slider_warmth.value(),
             "preset_name": self.combo_presets.currentText(),
-            "custom_w_mm": self.spin_custom_w.value(),
-            "custom_h_mm": self.spin_custom_h.value(),
+            "custom_w_mm": w_mm,
+            "custom_h_mm": h_mm,
         }
 
     # -------------------------------------------------------------------------
@@ -1165,22 +1764,26 @@ class PhotoStudioApp(QMainWindow):
 
     def _on_send_to_print_queue(self):
         if self.current_photo_idx < 0:
+            QMessageBox.information(self, "No Photo", "Please select a photo to send to print queue.")
             return
         item = self.workspace_photos[self.current_photo_idx]
         proc = item.get("processed")
         if not proc:
-            return
+            proc = item["baked"]
 
-        preset = self.combo_presets.currentText()
-        if preset == "Custom Size (mm)":
-            w_mm = self.spin_custom_w.value()
-            h_mm = self.spin_custom_h.value()
-        elif preset in engine.PRESET_SIZES and engine.PRESET_SIZES[preset][0] is not None:
-            w_mm, h_mm, _, _ = engine.PRESET_SIZES[preset]
+        if item.get("target_w_mm") and item.get("target_h_mm"):
+            w_mm = item["target_w_mm"]
+            h_mm = item["target_h_mm"]
         else:
-            # Default to standard passport 35x45 mm if freeform
-            w_mm = round(proc.width / engine.PX_PER_MM, 1)
-            h_mm = round(proc.height / engine.PX_PER_MM, 1)
+            preset = self.combo_presets.currentText()
+            dims_mm = PRESET_MAP.get(preset)
+            if dims_mm is not None:
+                w_mm, h_mm = dims_mm
+            else:
+                w_mm, h_mm = self._get_current_dimensions_in_mm()
+                if preset == "Freeform / Original":
+                    w_mm = round(proc.width / engine.PX_PER_MM, 1)
+                    h_mm = round(proc.height / engine.PX_PER_MM, 1)
 
         queue_entry = {
             "image": proc.copy(),
@@ -1191,7 +1794,7 @@ class PhotoStudioApp(QMainWindow):
         }
         self.print_queue.append(queue_entry)
         self._refresh_queue_table()
-        self.statusBar().showMessage(f"Added to A4 Queue: {item['name']} ({w_mm} x {h_mm} mm)", 4000)
+        self.statusBar().showMessage(f"Added to A4 Queue: {item['name']} ({w_mm:.1f} x {h_mm:.1f} mm)", 4000)
 
     # -------------------------------------------------------------------------
     # A4 Print Studio Handlers

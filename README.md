@@ -113,15 +113,22 @@ photo_editor/
 
 ## ⚡ Quick Start
 
-### 1. One-Click Installation
-Run [install.bat](file:///c:/custom_apps/photo_editor/install.bat) to install required dependencies, verify Windows Smart App Control compliance, and ensure model weights are bundled:
+### 1. Clone & One-Click Installation
+Anyone cloning this repository can set up the complete environment in one step. Open Command Prompt in the cloned directory and run `install.bat`:
 
 ```bat
 install.bat
 ```
 
+The script automatically:
+- Checks if Python 3.10+ is installed on the host machine.
+- Creates the local virtual environment (`venv`) if it doesn't already exist.
+- Upgrades `pip` and installs dependencies (`numpy`, `pillow`, `onnxruntime`, `PySide6-Essentials`, `huggingface_hub`).
+- Downloads and bundles local ONNX neural models into `./models/` for 100% offline runtime.
+- Runs a Smart App Control & import verification smoke test.
+
 ### 2. Launch the Desktop Application
-Double-click [PhotoStudio.bat](file:///c:/custom_apps/photo_editor/PhotoStudio.bat) or run from your terminal:
+Double-click `PhotoStudio.bat` or run from your terminal:
 
 ```bat
 .\venv\Scripts\python.exe main.py
