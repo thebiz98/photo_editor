@@ -449,26 +449,6 @@ class PhotoStudioApp(QMainWindow):
         self.lbl_current_res.setStyleSheet("color: #a1a1aa; font-weight: normal;")
         grp_rescale_layout.addWidget(self.lbl_current_res)
 
-        # Quick Presets Row: [50%] [100%] [200%]
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(4)
-        btn_preset_50 = QPushButton("50%")
-        btn_preset_50.setToolTip("Scale down to 50% (half size)")
-        btn_preset_50.clicked.connect(lambda: self.spin_rescale_pct.setValue(50))
-
-        btn_preset_100 = QPushButton("100%")
-        btn_preset_100.setToolTip("Reset scale to 100% (original)")
-        btn_preset_100.clicked.connect(lambda: self.spin_rescale_pct.setValue(100))
-
-        btn_preset_200 = QPushButton("200%")
-        btn_preset_200.setToolTip("Scale up to 200% (double resolution)")
-        btn_preset_200.clicked.connect(lambda: self.spin_rescale_pct.setValue(200))
-
-        preset_row.addWidget(btn_preset_50)
-        preset_row.addWidget(btn_preset_100)
-        preset_row.addWidget(btn_preset_200)
-        grp_rescale_layout.addLayout(preset_row)
-
         # Scale Percentage SpinBox
         scale_row = QHBoxLayout()
         scale_row.addWidget(QLabel("Scale:"))
@@ -499,10 +479,6 @@ class PhotoStudioApp(QMainWindow):
         sep.setFrameShadow(QFrame.Sunken)
         sep.setStyleSheet("color: #3f3f46; margin: 4px 0;")
         grp_rescale_layout.addWidget(sep)
-
-        lbl_ai = QLabel("Neural Detail Restoration:")
-        lbl_ai.setStyleSheet("color: #a1a1aa; font-size: 11px;")
-        grp_rescale_layout.addWidget(lbl_ai)
 
         self.btn_ai_enhance = QPushButton("✨ AI Enhance (2x)")
         self.btn_ai_enhance.setObjectName("btn_ai_enhance")
@@ -646,6 +622,7 @@ class PhotoStudioApp(QMainWindow):
                 self.canvas.set_roi_box(item["roi"])
             else:
                 self.canvas.set_roi_box(None)
+            self.spin_rescale_pct.setValue(100)
         finally:
             self._block_signals = False
 
@@ -824,6 +801,11 @@ class PhotoStudioApp(QMainWindow):
         else:
             self.lbl_current_res.setText("Current: None")
             self.lbl_target_res.setText("Result: None")
+            self._block_signals = True
+            try:
+                self.spin_rescale_pct.setValue(100)
+            finally:
+                self._block_signals = False
             self.btn_apply_scale.setEnabled(False)
             if hasattr(self, "btn_ai_enhance"):
                 self.btn_ai_enhance.setEnabled(False)
