@@ -20,6 +20,7 @@ Preparing official passport, visa, and ID photos or fixing scanned document phot
 5. **In-Memory Alpha Caching**: Raw alpha mattes are cached in memory so moving lighting sliders, color grading, backdrop colors, or edge refinement sliders never triggers redundant ONNX inference.
 6. **A4 2D Shelf Bin-Packing Engine**: Automatically tiles arbitrary photo dimensions and copy counts onto standard A4 paper (`2480 x 3508` @ 300 DPI) with customizable margins, inter-photo gaps, and scissor cut lines.
 7. **True 1:1 Hardware Printing**: Directly drives physical printers via `QPrinter` with a 0 mm margin layout, preventing Windows printer drivers from auto-shrinking 35×45 mm photos.
+8. **Deterministic Rescaling & AI Super-Resolution**: Built-in CPU Lanczos downscaling/upscaling (10% to 400%) with smart unsharp edge sharpening and 4096 px memory ceilings, plus 100% offline neural 2x super-resolution (`RealESRGAN-x2plus`) via ONNX Runtime to restore low-res images before printing. Zero UI freezes via background `QThread` workers.
 
 ---
 
@@ -93,11 +94,16 @@ photo_editor/
 ├── venv/                       # Verified Windows 11 ARM64 virtual environment
 ├── models/                     # Bundled offline ONNX model weights
 │   ├── rmbg14/model.onnx       # RMBG-1.4 high-precision segmentation (~176 MB)
-│   └── modnet/model.onnx       # MODNet portrait specialist (~25.8 MB)
+│   ├── modnet/model.onnx       # MODNet portrait specialist (~25.8 MB)
+│   └── superres/model.onnx     # Real-ESRGAN 2x neural super-resolution (~64 MB)
 ├── install.bat                 # One-click dependency setup & SAC verification
 ├── download_models.py          # Offline model bundler (skips if present on disk)
 ├── engine.py                   # ONNX inference, ROI patch engine, edge choke & lighting
+├── rescaler.py                 # CPU Lanczos scaling, smart unsharp, & Real-ESRGAN 2x engine
+├── canvas.py                   # Viewport, zoom, pan, ROI box, keyboard nudging
+├── styles.py                   # Centralized dark theme QSS stylesheet
 ├── printer.py                  # A4 2D shelf bin-packing & 1:1 QPrinter hardware engine
+├── print_studio.py             # Tab 2: A4 Print Studio controller
 ├── main.py                     # Native PySide6 GUI desktop application
 ├── PhotoStudio.bat             # Zero-console Windows launcher (pythonw.exe)
 ├── PLAN.md                     # Technical architecture & specification document
