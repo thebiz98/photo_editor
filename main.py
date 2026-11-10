@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
 
 from PySide6.QtCore import (
-    Qt, QRectF, QPointF, Signal, Slot, QMarginsF, QSize, QMimeData
+    Qt, QRectF, QPointF, Signal, Slot, QMarginsF, QSize, QMimeData, QThread
 )
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QBrush, QColor, QKeySequence,
@@ -46,6 +46,24 @@ PRESET_MAP = {
 
 from canvas import InteractiveCanvas, pil_to_pixmap
 from print_studio import PrintStudioTab
+
+
+class SuperResWorker(QThread):
+    """Background worker for non-blocking neural super-resolution inference."""
+    finished = Signal(object)  # Emits enhanced PIL.Image
+    error = Signal(str)
+
+    def __init__(self, img: Image.Image):
+        super().__init__()
+        self.img = img
+
+    def run(self):
+        try:
+            enhanced = rescaler.GLOBAL_SUPERRES_ENGINE.enhance_2x(self.img)
+            self.finished.emit(enhanced)
+        except Exception as e:
+            self.error.emit(str(e))
+
 
 class PhotoStudioApp(QMainWindow):
     """Main window with dual Photo Studio and A4 Print Studio tabs."""
@@ -445,9 +463,22 @@ class PhotoStudioApp(QMainWindow):
         self.btn_apply_scale.clicked.connect(self._on_apply_rescale)
         grp_rescale_layout.addWidget(self.btn_apply_scale)
 
-        # AI Enhance Container (Prepared for Phase 2)
-        self.layout_ai_enhance = QVBoxLayout()
-        grp_rescale_layout.addLayout(self.layout_ai_enhance)
+        # AI Enhance Container
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setStyleSheet("color: #3f3f46; margin: 4px 0;")
+        grp_rescale_layout.addWidget(sep)
+
+        lbl_ai = QLabel("Neural Detail Restoration:")
+        lbl_ai.setStyleSheet("color: #a1a1aa; font-size: 11px;")
+        grp_rescale_layout.addWidget(lbl_ai)
+
+        self.btn_ai_enhance = QPushButton("✨ AI Enhance (2x)")
+        self.btn_ai_enhance.setObjectName("btn_ai_enhance")
+        self.btn_ai_enhance.setToolTip("Reconstruct sharp details and textures using offline AI (for blurry/small photos)")
+        self.btn_ai_enhance.clicked.connect(self._on_ai_enhance_clicked)
+        grp_rescale_layout.addWidget(self.btn_ai_enhance)
 
         right_layout.addWidget(grp_rescale)
 
@@ -755,10 +786,22 @@ class PhotoStudioApp(QMainWindow):
             self.lbl_current_res.setText(f"Current: {w} x {h} px")
             self._on_rescale_pct_changed(self.spin_rescale_pct.value())
             self.btn_apply_scale.setEnabled(True)
+
+            if not rescaler.GLOBAL_SUPERRES_ENGINE.is_available():
+                self.btn_ai_enhance.setEnabled(False)
+                self.btn_ai_enhance.setToolTip("Super-resolution model not downloaded (check models/superres)")
+            elif max(w, h) > rescaler.MAX_AI_INPUT_DIM:
+                self.btn_ai_enhance.setEnabled(False)
+                self.btn_ai_enhance.setToolTip(f"Image is already high resolution (>{rescaler.MAX_AI_INPUT_DIM}px)")
+            else:
+                self.btn_ai_enhance.setEnabled(True)
+                self.btn_ai_enhance.setToolTip("Reconstruct sharp details using 2x neural super-resolution")
         else:
             self.lbl_current_res.setText("Current: None")
             self.lbl_target_res.setText("Result: None")
             self.btn_apply_scale.setEnabled(False)
+            if hasattr(self, "btn_ai_enhance"):
+                self.btn_ai_enhance.setEnabled(False)
 
     def _on_apply_rescale(self):
         """Executes compute-based rescaling and registers snapshot to undo history."""
@@ -812,6 +855,70 @@ class PhotoStudioApp(QMainWindow):
             QMessageBox.warning(self, "Scale Limit Exceeded", str(e))
         except Exception as e:
             QMessageBox.critical(self, "Rescaling Error", f"Failed to rescale image:\n{e}")
+
+    def _on_ai_enhance_clicked(self):
+        """Launches non-blocking AI super-resolution in background thread."""
+        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+            return
+        item = self.workspace_photos[self.current_photo_idx]
+
+        w, h = item["baked"].size
+        if max(w, h) > rescaler.MAX_AI_INPUT_DIM:
+            QMessageBox.information(
+                self, "Resolution Sufficient",
+                f"Image is already {w}x{h} px. AI enhancement is designed for photos under {rescaler.MAX_AI_INPUT_DIM}px."
+            )
+            return
+
+        # Lock UI controls during inference
+        self.btn_ai_enhance.setEnabled(False)
+        self.btn_apply_scale.setEnabled(False)
+        self.statusBar().showMessage("🤖 Running AI Super-Resolution (2x)... Please wait.")
+
+        # Start non-blocking QThread
+        self._ai_worker = SuperResWorker(item["baked"].copy())
+        self._ai_worker.finished.connect(self._on_ai_enhance_finished)
+        self._ai_worker.error.connect(self._on_ai_enhance_error)
+        self._ai_worker.start()
+
+    def _on_ai_enhance_finished(self, enhanced_img: Image.Image):
+        """Callback when AI enhance completes successfully."""
+        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+            return
+        item = self.workspace_photos[self.current_photo_idx]
+
+        # Push undo snapshot FIRST
+        self._push_undo_snapshot(item, "AI Super-Resolution (2x)")
+
+        # Update working photo
+        item["baked"] = enhanced_img
+        item["orig"] = enhanced_img
+        item["roi"] = None
+
+        # Refresh thumbnail
+        thumb = enhanced_img.copy()
+        thumb.thumbnail((48, 48), Image.BILINEAR)
+        list_item = self.list_photos.item(self.current_photo_idx)
+        if list_item:
+            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
+        # Re-render canvas
+        self.canvas.set_pixmap(pil_to_pixmap(enhanced_img), keep_roi=False)
+        self._trigger_render()
+        self.canvas.fit_image()
+        self._update_rescale_ui()
+
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(True)
+
+        w, h = enhanced_img.size
+        self.statusBar().showMessage(f"✨ AI Super-Resolution complete! New size: {w} x {h} px. Undo with Ctrl+Z.", 5000)
+
+    def _on_ai_enhance_error(self, err_msg: str):
+        """Callback if AI inference fails."""
+        self._update_rescale_ui()
+        self.statusBar().showMessage("AI enhancement failed.", 4000)
+        QMessageBox.warning(self, "AI Enhance Failed", f"Could not enhance image:\n{err_msg}")
 
     # -------------------------------------------------------------------------
     # Canvas Actions & ROI

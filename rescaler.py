@@ -2,16 +2,24 @@
 rescaler.py - Resolution & Image Rescaling Domain Engine.
 Handles deterministic CPU-based scaling, anti-aliased downsampling,
 smart edge sharpening, and safety dimension ceilings.
+Also provides offline ONNX Real-ESRGAN neural super-resolution (2x).
 Zero Qt dependencies: 100% testable domain logic.
 """
 
-from typing import Tuple
+from pathlib import Path
+from typing import Tuple, Optional
+import numpy as np
+import onnxruntime as ort
 from PIL import Image, ImageFilter
 
 # Safety Constants
 MIN_SCALE_PCT = 10         # Minimum downscale: 10%
 MAX_SCALE_PCT = 400        # Maximum upscale per step: 400%
 MAX_SAFE_IMAGE_DIM = 4096  # Hard pixel ceiling on width/height (~50 MP memory limit)
+MAX_AI_INPUT_DIM = 1800    # Hard ceiling for AI input to prevent OOM / multi-GB tensor allocations
+
+BASE_DIR = Path(__file__).resolve().parent
+SUPERRES_MODEL_PATH = BASE_DIR / "models" / "superres" / "model.onnx"
 
 
 def calculate_target_dimensions(orig_w: int, orig_h: int, scale_pct: float) -> Tuple[int, int]:
@@ -77,6 +85,66 @@ def rescale_image(
     return resampled, (new_w, new_h)
 
 
+class SuperResolutionEngine:
+    """
+    Offline ONNX Super-Resolution Engine (Real-ESRGAN 2x).
+    Lazy-loads inference session with CPUExecutionProvider on Windows ARM64.
+    """
+    def __init__(self, model_path: Path = SUPERRES_MODEL_PATH):
+        self.model_path = model_path
+        self._session: Optional[ort.InferenceSession] = None
+
+    def is_available(self) -> bool:
+        """Returns True if local ONNX model file exists and is valid (> 5 MB)."""
+        return self.model_path.exists() and self.model_path.stat().st_size > 5_000_000
+
+    def _get_session(self) -> ort.InferenceSession:
+        if self._session is None:
+            if not self.is_available():
+                raise FileNotFoundError(
+                    f"Super-resolution model not found at {self.model_path}. "
+                    "Run download_models.py to download."
+                )
+            self._session = ort.InferenceSession(
+                str(self.model_path),
+                providers=["CPUExecutionProvider"]
+            )
+        return self._session
+
+    def enhance_2x(self, img: Image.Image) -> Image.Image:
+        """
+        Runs 2x neural super-resolution on a PIL Image.
+        Raises ValueError if image dimensions exceed MAX_AI_INPUT_DIM.
+        """
+        w, h = img.size
+        if max(w, h) > MAX_AI_INPUT_DIM:
+            raise ValueError(
+                f"Image dimensions ({w}x{h} px) exceed maximum AI input ceiling ({MAX_AI_INPUT_DIM} px). "
+                "Use Scale % for manual adjustments."
+            )
+
+        rgb = img.convert("RGB")
+        session = self._get_session()
+        input_name = session.get_inputs()[0].name
+
+        # Prepare float32 NCHW tensor in [0.0, 1.0] range
+        img_np = np.array(rgb, dtype=np.float32) / 255.0
+        tensor = np.transpose(img_np, (2, 0, 1))[np.newaxis, :, :, :]
+        tensor = np.ascontiguousarray(tensor, dtype=np.float32)
+
+        # Execute ONNX inference
+        output = session.run(None, {input_name: tensor})[0][0]
+
+        # Post-process: CHW [0.0, 1.0] -> HWC uint8 [0, 255]
+        output = np.clip(output * 255.0, 0, 255).astype(np.uint8)
+        output_hwc = np.transpose(output, (1, 2, 0))
+        return Image.fromarray(output_hwc, mode="RGB")
+
+
+# Global singleton instance for clean reuse across UI actions
+GLOBAL_SUPERRES_ENGINE = SuperResolutionEngine()
+
+
 if __name__ == "__main__":
     # Self-test block
     test_img = Image.new("RGB", (400, 500), (200, 100, 50))
@@ -84,4 +152,12 @@ if __name__ == "__main__":
     assert dims == (200, 250), f"Downscale failed: {dims}"
     upscaled, dims = rescale_image(test_img, 200)
     assert dims == (800, 1000), f"Upscale failed: {dims}"
-    print("rescaler.py unit tests passed successfully.")
+    print("rescaler.py compute tests passed successfully.")
+
+    if GLOBAL_SUPERRES_ENGINE.is_available():
+        small_test = Image.new("RGB", (80, 100), (100, 150, 200))
+        ai_out = GLOBAL_SUPERRES_ENGINE.enhance_2x(small_test)
+        assert ai_out.size == (160, 200), f"AI Enhance failed: {ai_out.size}"
+        print("rescaler.py AI Super-Resolution test passed successfully.")
+    else:
+        print("AI Super-Resolution model not yet present.")
