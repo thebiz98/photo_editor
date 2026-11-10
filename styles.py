@@ -108,7 +108,8 @@ QPushButton#btn_send_queue {
     font-weight: bold;
     border: 1px solid #38bdf8;
     border-radius: 4px;
-    padding: 8px 12px;
+    padding: 5px 10px;
+    min-height: 24px;
 }
 QPushButton#btn_send_queue:hover {
     background-color: #0369a1;
@@ -131,6 +132,44 @@ QPushButton#btn_apply_crop:pressed {
     background-color: #92400e;
 }
 QPushButton#btn_apply_crop:disabled {
+    background-color: #27272a;
+    color: #71717a;
+    border-color: #3f3f46;
+}
+QPushButton#btn_apply_scale {
+    background-color: #0d9488;
+    color: #ffffff;
+    font-weight: bold;
+    border: 1px solid #14b8a6;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+QPushButton#btn_apply_scale:hover {
+    background-color: #0f766e;
+}
+QPushButton#btn_apply_scale:pressed {
+    background-color: #115e59;
+}
+QPushButton#btn_apply_scale:disabled {
+    background-color: #27272a;
+    color: #71717a;
+    border-color: #3f3f46;
+}
+QPushButton#btn_ai_enhance {
+    background-color: #7c3aed;
+    color: #ffffff;
+    font-weight: bold;
+    border: 1px solid #8b5cf6;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+QPushButton#btn_ai_enhance:hover {
+    background-color: #6d28d9;
+}
+QPushButton#btn_ai_enhance:pressed {
+    background-color: #5b21b6;
+}
+QPushButton#btn_ai_enhance:disabled {
     background-color: #27272a;
     color: #71717a;
     border-color: #3f3f46;
@@ -267,5 +306,12 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 }
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: none;
+}
+QSplitter::handle:horizontal {
+    background-color: #27272a;
+    width: 4px;
+}
+QSplitter::handle:horizontal:hover {
+    background-color: #0284c7;
 }
 """
