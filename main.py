@@ -266,11 +266,11 @@ class PhotoStudioApp(QMainWindow):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
 
-        self.btn_zoom_in = QPushButton("🔍+ In")
+        self.btn_zoom_in = QPushButton("🔍+")
         self.btn_zoom_in.setToolTip("Zoom In (Mouse Wheel Up)")
         self.btn_zoom_in.clicked.connect(lambda: self.canvas.zoom(1.2))
 
-        self.btn_zoom_out = QPushButton("🔍- Out")
+        self.btn_zoom_out = QPushButton("🔍-")
         self.btn_zoom_out.setToolTip("Zoom Out (Mouse Wheel Down)")
         self.btn_zoom_out.clicked.connect(lambda: self.canvas.zoom(1 / 1.2))
 
@@ -282,7 +282,7 @@ class PhotoStudioApp(QMainWindow):
         self.btn_rotate.setToolTip("Rotate 90° Clockwise")
         self.btn_rotate.clicked.connect(self._on_rotate_90)
 
-        self.btn_reset_roi = QPushButton("⬜ Reset Box")
+        self.btn_reset_roi = QPushButton("⬜ Reset")
         self.btn_reset_roi.setToolTip("Reset / Clear Selection Box")
         self.btn_reset_roi.clicked.connect(self._on_reset_roi)
 
@@ -300,6 +300,11 @@ class PhotoStudioApp(QMainWindow):
         self.btn_compare.pressed.connect(self._on_compare_pressed)
         self.btn_compare.released.connect(self._on_compare_released)
 
+        self.btn_send_queue = QPushButton("➕ Print")
+        self.btn_send_queue.setObjectName("btn_send_queue")
+        self.btn_send_queue.setToolTip("Add Current Photo to A4 Print Queue")
+        self.btn_send_queue.clicked.connect(self._on_send_to_print_queue)
+
         toolbar.addWidget(self.btn_zoom_in)
         toolbar.addWidget(self.btn_zoom_out)
         toolbar.addWidget(self.btn_fit)
@@ -308,6 +313,7 @@ class PhotoStudioApp(QMainWindow):
         toolbar.addWidget(self.btn_undo)
         toolbar.addWidget(self.btn_revert)
         toolbar.addWidget(self.btn_compare)
+        toolbar.addWidget(self.btn_send_queue)
         toolbar.addStretch()
         center_layout.addLayout(toolbar)
 
@@ -510,11 +516,6 @@ class PhotoStudioApp(QMainWindow):
         self.btn_save_photo = QPushButton("💾 Save Single Photo (PNG/JPG)")
         self.btn_save_photo.clicked.connect(self._on_save_single_photo)
         right_layout.addWidget(self.btn_save_photo)
-
-        self.btn_send_queue = QPushButton("➕ Send to A4 Print Queue")
-        self.btn_send_queue.setObjectName("btn_send_queue")
-        self.btn_send_queue.clicked.connect(self._on_send_to_print_queue)
-        right_layout.addWidget(self.btn_send_queue)
 
         right_layout.addStretch()
         right_scroll.setWidget(right_panel)

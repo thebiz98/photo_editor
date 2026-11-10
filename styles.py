@@ -108,7 +108,8 @@ QPushButton#btn_send_queue {
     font-weight: bold;
     border: 1px solid #38bdf8;
     border-radius: 4px;
-    padding: 8px 12px;
+    padding: 5px 10px;
+    min-height: 24px;
 }
 QPushButton#btn_send_queue:hover {
     background-color: #0369a1;
