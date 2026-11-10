@@ -94,18 +94,19 @@ class ROIHandle(QGraphicsRectItem):
 
 
 class ROIRectItem(QGraphicsRectItem):
-    """Interactive ROI Box with move and 8-point resize handles."""
+    """Interactive ROI Box with move and aspect-ratio locked resize handles."""
 
-    def __init__(self, rect: QRectF, bounds: QRectF, on_change_callback):
+    def __init__(self, rect: QRectF, bounds: QRectF, on_change_callback, aspect_ratio: Optional[float] = None):
         super().__init__(rect)
         self.bounds = bounds
         self.on_change_callback = on_change_callback
+        self.aspect_ratio = aspect_ratio
         self.setZValue(10)
 
-        # Dashed cyan line with subtle yellow accent
+        # Dashed cyan line with semi-transparent fill
         pen = QPen(QColor(0, 220, 255), 2, Qt.DashLine)
         self.setPen(pen)
-        self.setBrush(QBrush(QColor(0, 180, 255, 30)))  # Semi-transparent fill
+        self.setBrush(QBrush(QColor(0, 180, 255, 30)))
 
         self.setFlags(
             QGraphicsItem.ItemIsSelectable |
@@ -123,7 +124,20 @@ class ROIRectItem(QGraphicsRectItem):
         self._drag_start_scene = QPointF()
         self._rect_at_drag_start = QRectF()
 
+        self._sync_handle_visibility()
         self.update_handle_positions()
+
+    def set_aspect_ratio(self, ratio: Optional[float]):
+        self.aspect_ratio = ratio
+        self._sync_handle_visibility()
+        self.update_handle_positions()
+
+    def _sync_handle_visibility(self):
+        # In fixed aspect-ratio mode, hide mid-edge handles to prevent aspect distortion
+        is_fixed = (self.aspect_ratio is not None and self.aspect_ratio > 0)
+        for key in ["tm", "bm", "ml", "mr"]:
+            if key in self.handles:
+                self.handles[key].setVisible(not is_fixed)
 
     def update_handle_positions(self):
         r = self.rect()
@@ -149,23 +163,67 @@ class ROIRectItem(QGraphicsRectItem):
     def continue_handle_drag(self, scene_pos: QPointF):
         if not self._active_handle:
             return
-        delta = scene_pos - self._drag_start_scene
         r = QRectF(self._rect_at_drag_start)
         k = self._active_handle
-        left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
 
-        if "l" in k: left += delta.x()
-        if "r" in k: right += delta.x()
-        if "t" in k: top += delta.y()
-        if "b" in k: bottom += delta.y()
+        if self.aspect_ratio and self.aspect_ratio > 0:
+            ratio = self.aspect_ratio
+            if k == "br":
+                ax, ay = r.left(), r.top()
+                vx = max(15.0, scene_pos.x() - ax)
+                vy = max(15.0, scene_pos.y() - ay)
+                w = max(vx, vy * ratio)
+                max_w = self.bounds.right() - ax
+                max_h = self.bounds.bottom() - ay
+                w = min(w, max_w, max_h * ratio)
+                h = w / ratio
+                new_r = QRectF(ax, ay, w, h)
+            elif k == "tl":
+                ax, ay = r.right(), r.bottom()
+                vx = max(15.0, ax - scene_pos.x())
+                vy = max(15.0, ay - scene_pos.y())
+                w = max(vx, vy * ratio)
+                max_w = ax - self.bounds.left()
+                max_h = ay - self.bounds.top()
+                w = min(w, max_w, max_h * ratio)
+                h = w / ratio
+                new_r = QRectF(ax - w, ay - h, w, h)
+            elif k == "tr":
+                ax, ay = r.left(), r.bottom()
+                vx = max(15.0, scene_pos.x() - ax)
+                vy = max(15.0, ay - scene_pos.y())
+                w = max(vx, vy * ratio)
+                max_w = self.bounds.right() - ax
+                max_h = ay - self.bounds.top()
+                w = min(w, max_w, max_h * ratio)
+                h = w / ratio
+                new_r = QRectF(ax, ay - h, w, h)
+            elif k == "bl":
+                ax, ay = r.right(), r.top()
+                vx = max(15.0, ax - scene_pos.x())
+                vy = max(15.0, scene_pos.y() - ay)
+                w = max(vx, vy * ratio)
+                max_w = ax - self.bounds.left()
+                max_h = self.bounds.bottom() - ay
+                w = min(w, max_w, max_h * ratio)
+                h = w / ratio
+                new_r = QRectF(ax - w, ay, w, h)
+            else:
+                return
+        else:
+            delta = scene_pos - self._drag_start_scene
+            left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
+            if "l" in k: left += delta.x()
+            if "r" in k: right += delta.x()
+            if "t" in k: top += delta.y()
+            if "b" in k: bottom += delta.y()
 
-        # Constrain to bounds with minimum 10px dimensions
-        left = max(self.bounds.left(), min(left, right - 10))
-        right = min(self.bounds.right(), max(right, left + 10))
-        top = max(self.bounds.top(), min(top, bottom - 10))
-        bottom = min(self.bounds.bottom(), max(bottom, top + 10))
+            left = max(self.bounds.left(), min(left, right - 10))
+            right = min(self.bounds.right(), max(right, left + 10))
+            top = max(self.bounds.top(), min(top, bottom - 10))
+            bottom = min(self.bounds.bottom(), max(bottom, top + 10))
+            new_r = QRectF(left, top, right - left, bottom - top)
 
-        new_r = QRectF(left, top, right - left, bottom - top)
         self.setRect(new_r)
         self.update_handle_positions()
 
@@ -257,6 +315,7 @@ class InteractiveCanvas(QGraphicsView):
 
         self.pixmap_item: Optional[QGraphicsPixmapItem] = None
         self.roi_item: Optional[ROIRectItem] = None
+        self.aspect_ratio: Optional[float] = None
 
         self._is_rubber_banding = False
         self._rubber_start_pt = QPointF()
@@ -297,7 +356,7 @@ class InteractiveCanvas(QGraphicsView):
         bounds = QRectF(self.pixmap_item.pixmap().rect())
         r = QRectF(x1, y1, x2 - x1, y2 - y1).intersected(bounds)
         if r.width() >= 10 and r.height() >= 10:
-            self.roi_item = ROIRectItem(r, bounds, self._on_roi_modified)
+            self.roi_item = ROIRectItem(r, bounds, self._on_roi_modified, aspect_ratio=self.aspect_ratio)
             self.scene.addItem(self.roi_item)
 
     def spawn_centered_box(self, aspect_ratio: Optional[float] = None) -> Optional[Tuple[int, int, int, int]]:
@@ -332,6 +391,32 @@ class InteractiveCanvas(QGraphicsView):
 
     def _on_roi_modified(self, box: Tuple[int, int, int, int]):
         self.roiChanged.emit(box)
+
+    def set_aspect_ratio(self, ratio: Optional[float]):
+        """Sets the active aspect ratio and dynamically updates any existing crop box."""
+        self.aspect_ratio = ratio
+        if self.roi_item:
+            self.roi_item.set_aspect_ratio(ratio)
+            if ratio and ratio > 0 and self.pixmap_item:
+                r = self.roi_item.rect().normalized()
+                bounds = QRectF(self.pixmap_item.pixmap().rect())
+                cx, cy = r.center().x(), r.center().y()
+                curr_h = r.height()
+                new_w = curr_h * ratio
+                new_h = curr_h
+                if new_w > bounds.width():
+                    new_w = bounds.width() * 0.90
+                    new_h = new_w / ratio
+                if new_h > bounds.height():
+                    new_h = bounds.height() * 0.90
+                    new_w = new_h * ratio
+                x1 = max(bounds.left(), min(cx - new_w / 2, bounds.right() - new_w))
+                y1 = max(bounds.top(), min(cy - new_h / 2, bounds.bottom() - new_h))
+                new_r = QRectF(x1, y1, new_w, new_h)
+                self.roi_item.setRect(new_r)
+                self.roi_item.update_handle_positions()
+                box = (int(new_r.left()), int(new_r.top()), int(new_r.right()), int(new_r.bottom()))
+                self.roiChanged.emit(box)
 
     def fit_image(self):
         if self.pixmap_item:
@@ -393,9 +478,31 @@ class InteractiveCanvas(QGraphicsView):
         if self._is_rubber_banding and self._rubber_rect_item and self.pixmap_item:
             curr_pt = self.mapToScene(event.pos())
             bounds = QRectF(self.pixmap_item.pixmap().rect())
-            curr_pt.setX(max(bounds.left(), min(curr_pt.x(), bounds.right())))
-            curr_pt.setY(max(bounds.top(), min(curr_pt.y(), bounds.bottom())))
-            rect = QRectF(self._rubber_start_pt, curr_pt).normalized()
+
+            start_x = self._rubber_start_pt.x()
+            start_y = self._rubber_start_pt.y()
+            dx = curr_pt.x() - start_x
+            dy = curr_pt.y() - start_y
+
+            if self.aspect_ratio and self.aspect_ratio > 0:
+                sign_x = 1 if dx >= 0 else -1
+                sign_y = 1 if dy >= 0 else -1
+
+                max_w = (bounds.right() - start_x) if sign_x > 0 else (start_x - bounds.left())
+                max_h = (bounds.bottom() - start_y) if sign_y > 0 else (start_y - bounds.top())
+
+                desired_w = max(abs(dx), abs(dy) * self.aspect_ratio)
+                allowed_w = min(desired_w, max_w, max_h * self.aspect_ratio)
+                allowed_h = allowed_w / self.aspect_ratio
+
+                x1 = start_x if sign_x > 0 else start_x - allowed_w
+                y1 = start_y if sign_y > 0 else start_y - allowed_h
+                rect = QRectF(x1, y1, allowed_w, allowed_h)
+            else:
+                curr_pt.setX(max(bounds.left(), min(curr_pt.x(), bounds.right())))
+                curr_pt.setY(max(bounds.top(), min(curr_pt.y(), bounds.bottom())))
+                rect = QRectF(self._rubber_start_pt, curr_pt).normalized()
+
             self._rubber_rect_item.setRect(rect)
             event.accept()
             return
@@ -546,27 +653,24 @@ class PhotoStudioApp(QMainWindow):
         grp_workspace_layout.addWidget(self.btn_remove_photo)
         left_layout.addWidget(grp_workspace)
 
-        # Box Selection Mode
-        grp_roi_mode = QGroupBox("🔲 Box Selection Mode")
+        # Retouch Scope (Lighting & Local Patching)
+        grp_roi_mode = QGroupBox("🎯 Retouch Scope")
         grp_roi_layout = QVBoxLayout(grp_roi_mode)
         grp_roi_layout.setSpacing(3)
         self.bg_roi_mode = QButtonGroup(self)
 
         self.radio_mode_whole = QRadioButton("Whole Image")
         self.radio_mode_patch = QRadioButton("Edit Inside Box (Patch)")
-        self.radio_mode_crop = QRadioButton("Crop to Box (Extract)")
         self.radio_mode_whole.setChecked(True)
 
         self.bg_roi_mode.addButton(self.radio_mode_whole, 0)
         self.bg_roi_mode.addButton(self.radio_mode_patch, 1)
-        self.bg_roi_mode.addButton(self.radio_mode_crop, 2)
         self.bg_roi_mode.idClicked.connect(self._on_roi_mode_changed)
 
         grp_roi_layout.addWidget(self.radio_mode_whole)
         grp_roi_layout.addWidget(self.radio_mode_patch)
-        grp_roi_layout.addWidget(self.radio_mode_crop)
 
-        self.btn_bake_edit = QPushButton("✔️ Bake / Commit Edits")
+        self.btn_bake_edit = QPushButton("✔️ Bake Edits to Base")
         self.btn_bake_edit.setToolTip("Permanently commits current patch or lighting into image base")
         self.btn_bake_edit.clicked.connect(self._on_bake_edit)
         grp_roi_layout.addWidget(self.btn_bake_edit)
@@ -967,6 +1071,64 @@ class PhotoStudioApp(QMainWindow):
             padding: 0 5px;
             color: #38bdf8;
         }
+        /* Radio Buttons & High-Contrast Selected Indicator */
+        QRadioButton {
+            color: #f4f4f5;
+            spacing: 8px;
+            font-size: 13px;
+            background-color: transparent;
+        }
+        QRadioButton::indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 9px;
+            border: 2px solid #52525b;
+            background-color: #27272a;
+        }
+        QRadioButton::indicator:hover {
+            border-color: #38bdf8;
+            background-color: #3f3f46;
+        }
+        QRadioButton::indicator:checked {
+            border: 2px solid #38bdf8;
+            background: qradialgradient(
+                cx: 0.5, cy: 0.5, radius: 0.45, fx: 0.5, fy: 0.5,
+                stop: 0 #38bdf8,
+                stop: 0.55 #38bdf8,
+                stop: 0.65 #27272a,
+                stop: 1.0 #27272a
+            );
+        }
+        QRadioButton::indicator:disabled {
+            border-color: #3f3f46;
+            background-color: #1f1f23;
+        }
+        /* Checkboxes & Checkmark Indicator */
+        QCheckBox {
+            color: #f4f4f5;
+            spacing: 8px;
+            font-size: 13px;
+            background-color: transparent;
+        }
+        QCheckBox::indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            border: 2px solid #52525b;
+            background-color: #27272a;
+        }
+        QCheckBox::indicator:hover {
+            border-color: #38bdf8;
+            background-color: #3f3f46;
+        }
+        QCheckBox::indicator:checked {
+            border: 2px solid #38bdf8;
+            background-color: #0284c7;
+        }
+        QCheckBox::indicator:disabled {
+            border-color: #3f3f46;
+            background-color: #1f1f23;
+        }
         QPushButton {
             background-color: #27272a;
             border: 1px solid #3f3f46;
@@ -1319,11 +1481,9 @@ class PhotoStudioApp(QMainWindow):
                 self.combo_presets.setCurrentText(snapshot["preset"])
             if item["roi"]:
                 self.canvas.set_roi_box(item["roi"])
-                self.radio_mode_crop.setChecked(True)
                 self.btn_apply_crop.setEnabled(True)
             else:
                 self.canvas.set_roi_box(None)
-                self.radio_mode_whole.setChecked(True)
                 self.btn_apply_crop.setEnabled(False)
         finally:
             self._block_signals = False
@@ -1362,7 +1522,6 @@ class PhotoStudioApp(QMainWindow):
         self._block_signals = True
         try:
             self.canvas.set_roi_box(None)
-            self.radio_mode_whole.setChecked(True)
             self.btn_apply_crop.setEnabled(False)
             self.combo_presets.setCurrentText("Freeform / Original")
         finally:
@@ -1515,28 +1674,27 @@ class PhotoStudioApp(QMainWindow):
             try:
                 self.spin_custom_w.setValue(unit_w)
                 self.spin_custom_h.setValue(unit_h)
-                self.radio_mode_crop.setChecked(True)
             finally:
                 self._block_signals = False
 
             self.btn_apply_crop.setEnabled(True)
             aspect = w_mm / h_mm if h_mm > 0 else 1.0
-            self.canvas.spawn_centered_box(aspect_ratio=aspect)
+            self.canvas.set_aspect_ratio(aspect)
+            if not self.canvas.get_roi_box():
+                self.canvas.spawn_centered_box(aspect_ratio=aspect)
             self.statusBar().showMessage(
                 f"Preset loaded: {text} ({w_mm:.1f} x {h_mm:.1f} mm). Frame with box, then click Apply Crop.",
                 5000
             )
         elif text == "Freeform / Original":
-            self.canvas.set_roi_box(None)
-            self.radio_mode_whole.setChecked(True)
-            self.btn_apply_crop.setEnabled(False)
-            self.statusBar().showMessage("Freeform: Whole image selected.", 3000)
-            self._trigger_render()
+            self.canvas.set_aspect_ratio(None)
+            self.btn_apply_crop.setEnabled(self.canvas.get_roi_box() is not None)
+            self.statusBar().showMessage("Freeform: Drag any box freely or leave full image.", 3000)
         elif text == "Custom Size":
-            self.radio_mode_crop.setChecked(True)
             self.btn_apply_crop.setEnabled(True)
             w_mm, h_mm = self._get_current_dimensions_in_mm()
             aspect = w_mm / h_mm if h_mm > 0 else 1.0
+            self.canvas.set_aspect_ratio(aspect)
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=aspect)
 
@@ -1556,11 +1714,11 @@ class PhotoStudioApp(QMainWindow):
             finally:
                 self._block_signals = False
 
-        self.radio_mode_crop.setChecked(True)
         self.btn_apply_crop.setEnabled(True)
 
         if self._dim_w_mm > 0 and self._dim_h_mm > 0:
             aspect = self._dim_w_mm / self._dim_h_mm
+            self.canvas.set_aspect_ratio(aspect)
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=aspect)
 
@@ -1570,19 +1728,10 @@ class PhotoStudioApp(QMainWindow):
 
         if mode_id == 0:  # Whole Image
             self.canvas.set_roi_box(None)
-            self.btn_apply_crop.setEnabled(False)
             self._trigger_render()
         elif mode_id == 1:  # Patch ID
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=None)
-            self.btn_apply_crop.setEnabled(False)
-            self._trigger_render()
-        elif mode_id == 2:  # Crop to Box
-            if not self.canvas.get_roi_box():
-                w_mm, h_mm = self._get_current_dimensions_in_mm()
-                aspect = w_mm / h_mm if h_mm > 0 else 1.0
-                self.canvas.spawn_centered_box(aspect_ratio=aspect)
-            self.btn_apply_crop.setEnabled(True)
             self._trigger_render()
 
     def _on_apply_crop(self):
@@ -1597,17 +1746,22 @@ class PhotoStudioApp(QMainWindow):
             roi_box = (0, 0, w, h)
 
         w_mm, h_mm = self._get_current_dimensions_in_mm()
-        target_w_px = int(round(w_mm * engine.PX_PER_MM))
-        target_h_px = int(round(h_mm * engine.PX_PER_MM))
-        target_px = (target_w_px, target_h_px) if (target_w_px > 0 and target_h_px > 0) else None
+        preset = self.combo_presets.currentText()
+
+        target_px = None
+        if preset != "Freeform / Original" and w_mm > 0 and h_mm > 0:
+            target_w_px = int(round(w_mm * engine.PX_PER_MM))
+            target_h_px = int(round(h_mm * engine.PX_PER_MM))
+            target_px = (target_w_px, target_h_px)
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self._push_undo_snapshot(item, f"Crop to {w_mm:.1f}x{h_mm:.1f} mm")
+            desc = f"Crop to {w_mm:.1f}x{h_mm:.1f} mm" if target_px else "Crop to Selection"
+            self._push_undo_snapshot(item, desc)
             item["baked"] = engine.crop_and_resize(item["baked"], roi_box, target_px)
             item["orig"] = engine.crop_and_resize(item["orig"], roi_box, target_px)
-            item["target_w_mm"] = w_mm
-            item["target_h_mm"] = h_mm
+            item["target_w_mm"] = w_mm if preset != "Freeform / Original" else None
+            item["target_h_mm"] = h_mm if preset != "Freeform / Original" else None
             item["roi"] = None
 
             thumb = item["baked"].copy()
@@ -1619,15 +1773,15 @@ class PhotoStudioApp(QMainWindow):
             self._block_signals = True
             try:
                 self.canvas.set_roi_box(None)
-                self.radio_mode_whole.setChecked(True)
             finally:
                 self._block_signals = False
 
             self._trigger_render()
             self.canvas.fit_image()
 
+            dim_text = f" ({w_mm:.1f} x {h_mm:.1f} mm)" if target_px else ""
             self.statusBar().showMessage(
-                f"✂️ Cropped photo to {w_mm:.1f} x {h_mm:.1f} mm ({item['baked'].width} x {item['baked'].height} px)",
+                f"✂️ Cropped photo to {item['baked'].width} x {item['baked'].height} px{dim_text} with zero distortion",
                 5000
             )
         except Exception as e:
@@ -1712,11 +1866,7 @@ class PhotoStudioApp(QMainWindow):
         roi_box = self.canvas.get_roi_box()
 
         mode_id = self.bg_roi_mode.checkedId()
-        mode_str = "whole"
-        if mode_id == 1:
-            mode_str = "patch"
-        elif mode_id == 2:
-            mode_str = "crop"
+        mode_str = "patch" if mode_id == 1 else "whole"
 
         # Synchronous execution with wait cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
