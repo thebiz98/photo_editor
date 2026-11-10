@@ -135,6 +135,44 @@ QPushButton#btn_apply_crop:disabled {
     color: #71717a;
     border-color: #3f3f46;
 }
+QPushButton#btn_apply_scale {
+    background-color: #0d9488;
+    color: #ffffff;
+    font-weight: bold;
+    border: 1px solid #14b8a6;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+QPushButton#btn_apply_scale:hover {
+    background-color: #0f766e;
+}
+QPushButton#btn_apply_scale:pressed {
+    background-color: #115e59;
+}
+QPushButton#btn_apply_scale:disabled {
+    background-color: #27272a;
+    color: #71717a;
+    border-color: #3f3f46;
+}
+QPushButton#btn_ai_enhance {
+    background-color: #7c3aed;
+    color: #ffffff;
+    font-weight: bold;
+    border: 1px solid #8b5cf6;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+QPushButton#btn_ai_enhance:hover {
+    background-color: #6d28d9;
+}
+QPushButton#btn_ai_enhance:pressed {
+    background-color: #5b21b6;
+}
+QPushButton#btn_ai_enhance:disabled {
+    background-color: #27272a;
+    color: #71717a;
+    border-color: #3f3f46;
+}
 QPushButton#btn_print_hw {
     background-color: #16a34a;
     color: #ffffff;

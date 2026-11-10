@@ -29,6 +29,7 @@ from PIL import Image
 
 import engine
 import printer
+import rescaler
 from styles import DARK_THEME_QSS
 
 
@@ -277,13 +278,17 @@ class PhotoStudioApp(QMainWindow):
 
         splitter.addWidget(center_panel)
 
-        # 3. Right Panel (AI Segmentation & Lighting) - Compact fixed width
+        # 3. Right Panel (AI Segmentation, Lighting & Resolution)
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        right_scroll.setFixedWidth(275)
+
         right_panel = QWidget()
-        right_panel.setFixedWidth(260)
-        right_panel.setMinimumWidth(250)
-        right_panel.setMaximumWidth(285)
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setContentsMargins(4, 4, 10, 8)
         right_layout.setSpacing(5)
 
         # AI Background Group
@@ -384,6 +389,68 @@ class PhotoStudioApp(QMainWindow):
 
         right_layout.addWidget(grp_lighting)
 
+        # -------------------------------------------------------------------------
+        # Resolution & Scaling Group (rescaler.py integration)
+        # -------------------------------------------------------------------------
+        grp_rescale = QGroupBox("📐 Resolution && Scaling")
+        grp_rescale_layout = QVBoxLayout(grp_rescale)
+        grp_rescale_layout.setSpacing(5)
+
+        # Current Resolution Display
+        self.lbl_current_res = QLabel("Current: None")
+        self.lbl_current_res.setStyleSheet("color: #a1a1aa; font-weight: normal;")
+        grp_rescale_layout.addWidget(self.lbl_current_res)
+
+        # Quick Presets Row: [50%] [100%] [200%]
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(4)
+        btn_preset_50 = QPushButton("50%")
+        btn_preset_50.setToolTip("Scale down to 50% (half size)")
+        btn_preset_50.clicked.connect(lambda: self.spin_rescale_pct.setValue(50))
+
+        btn_preset_100 = QPushButton("100%")
+        btn_preset_100.setToolTip("Reset scale to 100% (original)")
+        btn_preset_100.clicked.connect(lambda: self.spin_rescale_pct.setValue(100))
+
+        btn_preset_200 = QPushButton("200%")
+        btn_preset_200.setToolTip("Scale up to 200% (double resolution)")
+        btn_preset_200.clicked.connect(lambda: self.spin_rescale_pct.setValue(200))
+
+        preset_row.addWidget(btn_preset_50)
+        preset_row.addWidget(btn_preset_100)
+        preset_row.addWidget(btn_preset_200)
+        grp_rescale_layout.addLayout(preset_row)
+
+        # Scale Percentage SpinBox
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(QLabel("Scale:"))
+        self.spin_rescale_pct = QSpinBox()
+        self.spin_rescale_pct.setRange(rescaler.MIN_SCALE_PCT, rescaler.MAX_SCALE_PCT)
+        self.spin_rescale_pct.setValue(100)
+        self.spin_rescale_pct.setSingleStep(10)
+        self.spin_rescale_pct.setSuffix(" %")
+        self.spin_rescale_pct.valueChanged.connect(self._on_rescale_pct_changed)
+        scale_row.addWidget(self.spin_rescale_pct)
+        grp_rescale_layout.addLayout(scale_row)
+
+        # Target Resolution Live Preview Label
+        self.lbl_target_res = QLabel("Result: 100% (Original)")
+        self.lbl_target_res.setStyleSheet("color: #38bdf8; font-size: 11px;")
+        grp_rescale_layout.addWidget(self.lbl_target_res)
+
+        # Apply Scale Button
+        self.btn_apply_scale = QPushButton("⚡ Apply Scale")
+        self.btn_apply_scale.setObjectName("btn_apply_scale")
+        self.btn_apply_scale.setToolTip("Apply compute-based Lanczos rescaling to current image")
+        self.btn_apply_scale.clicked.connect(self._on_apply_rescale)
+        grp_rescale_layout.addWidget(self.btn_apply_scale)
+
+        # AI Enhance Container (Prepared for Phase 2)
+        self.layout_ai_enhance = QVBoxLayout()
+        grp_rescale_layout.addLayout(self.layout_ai_enhance)
+
+        right_layout.addWidget(grp_rescale)
+
         # Bottom Actions
         self.btn_save_photo = QPushButton("💾 Save Single Photo (PNG/JPG)")
         self.btn_save_photo.clicked.connect(self._on_save_single_photo)
@@ -395,7 +462,8 @@ class PhotoStudioApp(QMainWindow):
         right_layout.addWidget(self.btn_send_queue)
 
         right_layout.addStretch()
-        splitter.addWidget(right_panel)
+        right_scroll.setWidget(right_panel)
+        splitter.addWidget(right_scroll)
 
         # Configure splitter behavior: fixed side panes, center expands
         splitter.setCollapsible(0, False)
@@ -404,7 +472,7 @@ class PhotoStudioApp(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([250, 835, 255])
+        splitter.setSizes([250, 815, 275])
 
 
     def _setup_shortcuts(self):
@@ -503,10 +571,12 @@ class PhotoStudioApp(QMainWindow):
             else:
                 self.current_photo_idx = -1
                 self.canvas.set_pixmap(QPixmap())
+                self._update_rescale_ui()
 
     def _on_photo_selected(self, row: int):
         if row < 0 or row >= len(self.workspace_photos):
             self.current_photo_idx = -1
+            self._update_rescale_ui()
             return
 
         self.current_photo_idx = row
@@ -525,6 +595,7 @@ class PhotoStudioApp(QMainWindow):
 
         self._trigger_render()
         self.canvas.fit_image()
+        self._update_rescale_ui()
         if hasattr(self, "btn_undo"):
             self.btn_undo.setEnabled(len(item.get("history", [])) > 0)
 
@@ -598,6 +669,7 @@ class PhotoStudioApp(QMainWindow):
 
         self._trigger_render()
         self.canvas.fit_image()
+        self._update_rescale_ui()
         self.statusBar().showMessage(f"↩️ Undid: {snapshot['desc']}", 4000)
         if hasattr(self, "btn_undo"):
             self.btn_undo.setEnabled(len(history) > 0)
@@ -636,6 +708,7 @@ class PhotoStudioApp(QMainWindow):
 
         self._trigger_render()
         self.canvas.fit_image()
+        self._update_rescale_ui()
         self.statusBar().showMessage("⏮️ Reverted photo to initial unedited state.", 5000)
 
     def _on_bake_edit(self):
@@ -649,7 +722,96 @@ class PhotoStudioApp(QMainWindow):
             self.canvas.set_pixmap(pil_to_pixmap(item["baked"]), keep_roi=False)
             self._on_reset_lighting()
             self._on_reset_roi()
+            self._update_rescale_ui()
             self.statusBar().showMessage("Current edits baked successfully into base image", 4000)
+
+    # -------------------------------------------------------------------------
+    # Resolution & Scaling Handlers (rescaler.py)
+    # -------------------------------------------------------------------------
+
+    def _on_rescale_pct_changed(self, pct: int):
+        """Calculates live target pixel readout and validates against safety ceiling."""
+        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+            self.lbl_target_res.setText("Result: No photo selected")
+            return
+        item = self.workspace_photos[self.current_photo_idx]
+        orig_w, orig_h = item["baked"].size
+        target_w, target_h = rescaler.calculate_target_dimensions(orig_w, orig_h, pct)
+
+        if not rescaler.is_within_safe_limits(target_w, target_h):
+            self.lbl_target_res.setText(f"Result: {target_w}x{target_h} px (⚠️ Exceeds {rescaler.MAX_SAFE_IMAGE_DIM}px Cap!)")
+            self.lbl_target_res.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 11px;")
+            self.btn_apply_scale.setEnabled(False)
+        else:
+            self.lbl_target_res.setText(f"Result: {target_w} x {target_h} px")
+            self.lbl_target_res.setStyleSheet("color: #38bdf8; font-size: 11px;")
+            self.btn_apply_scale.setEnabled(True)
+
+    def _update_rescale_ui(self):
+        """Refreshes the resolution readout and target calculation for active photo."""
+        if self.current_photo_idx >= 0 and self.current_photo_idx < len(self.workspace_photos):
+            item = self.workspace_photos[self.current_photo_idx]
+            w, h = item["baked"].size
+            self.lbl_current_res.setText(f"Current: {w} x {h} px")
+            self._on_rescale_pct_changed(self.spin_rescale_pct.value())
+            self.btn_apply_scale.setEnabled(True)
+        else:
+            self.lbl_current_res.setText("Current: None")
+            self.lbl_target_res.setText("Result: None")
+            self.btn_apply_scale.setEnabled(False)
+
+    def _on_apply_rescale(self):
+        """Executes compute-based rescaling and registers snapshot to undo history."""
+        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+            return
+        pct = self.spin_rescale_pct.value()
+        if pct == 100:
+            self.statusBar().showMessage("Scale is 100% (no changes applied).", 3000)
+            return
+
+        item = self.workspace_photos[self.current_photo_idx]
+
+        try:
+            # 1. Push undo snapshot FIRST so this operation is reversible via Ctrl+Z
+            self._push_undo_snapshot(item, f"Scale to {pct}%")
+
+            # 2. Rescale image using rescaler module
+            scaled_img, (new_w, new_h) = rescaler.rescale_image(item["baked"], pct)
+
+            # 3. Update working image & clear stale ROI
+            item["baked"] = scaled_img
+            item["orig"] = scaled_img
+            item["roi"] = None
+
+            # 4. Refresh workspace list thumbnail
+            thumb = scaled_img.copy()
+            thumb.thumbnail((48, 48), Image.BILINEAR)
+            list_item = self.list_photos.item(self.current_photo_idx)
+            if list_item:
+                list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
+            # 5. Reset scale spinner back to 100% baseline for the new resolution
+            self._block_signals = True
+            try:
+                self.spin_rescale_pct.setValue(100)
+            finally:
+                self._block_signals = False
+
+            # 6. Re-render canvas & update readouts
+            self.canvas.set_pixmap(pil_to_pixmap(scaled_img), keep_roi=False)
+            self._trigger_render()
+            self.canvas.fit_image()
+            self._update_rescale_ui()
+
+            # 7. Enable undo button and show confirmation
+            if hasattr(self, "btn_undo"):
+                self.btn_undo.setEnabled(True)
+            self.statusBar().showMessage(f"⚡ Rescaled to {pct}% ({new_w} x {new_h} px). Undo with Ctrl+Z.", 5000)
+
+        except ValueError as e:
+            QMessageBox.warning(self, "Scale Limit Exceeded", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "Rescaling Error", f"Failed to rescale image:\n{e}")
 
     # -------------------------------------------------------------------------
     # Canvas Actions & ROI
