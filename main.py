@@ -44,6 +44,7 @@ PRESET_MAP = {
 
 
 from canvas import InteractiveCanvas, pil_to_pixmap
+from print_studio import PrintStudioTab
 
 class PhotoStudioApp(QMainWindow):
     """Main window with dual Photo Studio and A4 Print Studio tabs."""
@@ -65,7 +66,6 @@ class PhotoStudioApp(QMainWindow):
         self._dim_h_mm: float = 45.0
 
         # Print queue: List of {"image": PIL.Image, "width_mm": float, "height_mm": float, "copies": int, "label": str}
-        self.print_queue: List[Dict[str, Any]] = []
 
         self._setup_ui()
         self._setup_shortcuts()
@@ -82,8 +82,7 @@ class PhotoStudioApp(QMainWindow):
         self.tabs.addTab(self.tab_studio, "📸 Photo Studio")
 
         # Tab 2: A4 Print Studio
-        self.tab_printer = QWidget()
-        self._build_printer_tab(self.tab_printer)
+        self.tab_printer = PrintStudioTab(status_bar_callback=self.statusBar().showMessage)
         self.tabs.addTab(self.tab_printer, "🖨️ A4 Print Studio")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -407,119 +406,6 @@ class PhotoStudioApp(QMainWindow):
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([250, 835, 255])
 
-    def _build_printer_tab(self, parent_widget: QWidget):
-        layout = QHBoxLayout(parent_widget)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
-
-        # Left: Queue & Layout settings - wrapped in QScrollArea with minimum height
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        left_scroll.setFixedWidth(380)
-        left_scroll.verticalScrollBar().setSingleStep(25)
-
-        left_panel = QWidget()
-        left_panel.setMinimumHeight(600)
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setSizeConstraint(QLayout.SetMinimumSize)
-        left_layout.setContentsMargins(4, 4, 14, 8)
-        left_layout.setSpacing(6)
-
-        grp_queue = QGroupBox("📋 A4 Print Queue")
-        grp_queue_layout = QVBoxLayout(grp_queue)
-        grp_queue_layout.setSpacing(5)
-
-        self.tbl_queue = QTableWidget(0, 4)
-        self.tbl_queue.setHorizontalHeaderLabels(["Preview", "Size (mm)", "Copies", "Action"])
-        self.tbl_queue.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.tbl_queue.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.tbl_queue.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.tbl_queue.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.tbl_queue.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.tbl_queue.setMinimumHeight(110)
-        self.tbl_queue.setMaximumHeight(160)
-        grp_queue_layout.addWidget(self.tbl_queue)
-
-        self.btn_clear_queue = QPushButton("🗑️ Clear Entire Queue")
-        self.btn_clear_queue.clicked.connect(self._on_clear_queue)
-        grp_queue_layout.addWidget(self.btn_clear_queue)
-        left_layout.addWidget(grp_queue)
-
-        grp_layout_settings = QGroupBox("📐 A4 Page Layout Settings")
-        grp_settings_layout = QVBoxLayout(grp_layout_settings)
-        grp_settings_layout.setSpacing(4)
-
-        margin_row = QHBoxLayout()
-        margin_row.addWidget(QLabel("Page Margin (mm):"))
-        self.spin_margin = QDoubleSpinBox()
-        self.spin_margin.setRange(0.0, 30.0)
-        self.spin_margin.setValue(10.0)
-        self.spin_margin.setSingleStep(1.0)
-        self.spin_margin.setSuffix(" mm")
-        self.spin_margin.valueChanged.connect(self._regenerate_a4_preview)
-        margin_row.addWidget(self.spin_margin)
-        grp_settings_layout.addLayout(margin_row)
-
-        gap_row = QHBoxLayout()
-        gap_row.addWidget(QLabel("Gap Between Photos (mm):"))
-        self.spin_gap = QDoubleSpinBox()
-        self.spin_gap.setRange(0.0, 20.0)
-        self.spin_gap.setValue(2.0)
-        self.spin_gap.setSingleStep(0.5)
-        self.spin_gap.setSuffix(" mm")
-        self.spin_gap.valueChanged.connect(self._regenerate_a4_preview)
-        gap_row.addWidget(self.spin_gap)
-        grp_settings_layout.addLayout(gap_row)
-
-        self.chk_cut_lines = QCheckBox("Draw Light-Grey Scissor Cut Lines")
-        self.chk_cut_lines.setChecked(True)
-        self.chk_cut_lines.toggled.connect(self._regenerate_a4_preview)
-        grp_settings_layout.addWidget(self.chk_cut_lines)
-
-        self.lbl_queue_status = QLabel("Placed: 0 photos | Overflow: 0 photos")
-        self.lbl_queue_status.setStyleSheet("font-weight: bold; color: #38bdf8;")
-        grp_settings_layout.addWidget(self.lbl_queue_status)
-
-        left_layout.addWidget(grp_layout_settings)
-
-        # Primary Output Bar - stacked directly below settings, then stretch
-        grp_output = QGroupBox("🖨️ Hardware Printing && Export")
-        grp_output_layout = QVBoxLayout(grp_output)
-        grp_output_layout.setSpacing(5)
-
-        self.btn_print_hw = QPushButton("🖨️ Print Directly (1:1 Hardware A4)")
-        self.btn_print_hw.setObjectName("btn_print_hw")
-        self.btn_print_hw.clicked.connect(self._on_print_hardware)
-        grp_output_layout.addWidget(self.btn_print_hw)
-
-        self.btn_export_png = QPushButton("💾 Save 300-DPI A4 PNG")
-        self.btn_export_png.clicked.connect(self._on_export_a4_png)
-        grp_output_layout.addWidget(self.btn_export_png)
-
-        self.btn_export_pdf = QPushButton("📄 Save 300-DPI A4 PDF")
-        self.btn_export_pdf.clicked.connect(self._on_export_a4_pdf)
-        grp_output_layout.addWidget(self.btn_export_pdf)
-
-        left_layout.addWidget(grp_output)
-        left_layout.addSpacing(20)
-        left_layout.addStretch()
-
-        left_scroll.setWidget(left_panel)
-        layout.addWidget(left_scroll)
-
-        # Right: Live A4 Preview
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(4, 4, 4, 4)
-
-        self.a4_canvas = InteractiveCanvas()
-        right_layout.addWidget(self.a4_canvas)
-        layout.addWidget(right_panel, stretch=1)
-
-        self._cached_a4_sheet: Optional[Image.Image] = None
 
     def _setup_shortcuts(self):
         # Global Ctrl+V clipboard paste shortcut
@@ -1150,15 +1036,7 @@ class PhotoStudioApp(QMainWindow):
                     w_mm = round(proc.width / engine.PX_PER_MM, 1)
                     h_mm = round(proc.height / engine.PX_PER_MM, 1)
 
-        queue_entry = {
-            "image": proc.copy(),
-            "width_mm": w_mm,
-            "height_mm": h_mm,
-            "copies": 4,  # default 4 copies
-            "label": item["name"]
-        }
-        self.print_queue.append(queue_entry)
-        self._refresh_queue_table()
+        self.tab_printer.add_photo(proc, w_mm, h_mm, copies=4, label=item["name"])
         self.statusBar().showMessage(f"Added to A4 Queue: {item['name']} ({w_mm:.1f} x {h_mm:.1f} mm)", 4000)
 
     # -------------------------------------------------------------------------
@@ -1167,117 +1045,8 @@ class PhotoStudioApp(QMainWindow):
 
     def _on_tab_changed(self, idx: int):
         if idx == 1:
-            # Switched to A4 Print Studio
-            self._regenerate_a4_preview()
+            self.tab_printer.refresh_preview()
 
-    def _refresh_queue_table(self):
-        self.tbl_queue.setRowCount(0)
-        for i, item in enumerate(self.print_queue):
-            self.tbl_queue.insertRow(i)
-
-            # Thumbnail
-            thumb = item["image"].copy()
-            thumb.thumbnail((40, 40), Image.BILINEAR)
-            lbl_icon = QLabel()
-            lbl_icon.setPixmap(pil_to_pixmap(thumb))
-            lbl_icon.setAlignment(Qt.AlignCenter)
-            self.tbl_queue.setCellWidget(i, 0, lbl_icon)
-
-            # Dimensions
-            dim_str = f"{item['width_mm']:.1f} x {item['height_mm']:.1f} mm"
-            dim_item = QTableWidgetItem(dim_str)
-            dim_item.setTextAlignment(Qt.AlignCenter)
-            self.tbl_queue.setItem(i, 1, dim_item)
-
-            # Copies SpinBox
-            spin = QSpinBox()
-            spin.setRange(1, 50)
-            spin.setValue(item.get("copies", 1))
-            spin.valueChanged.connect(lambda val, idx=i: self._on_queue_copies_changed(idx, val))
-            self.tbl_queue.setCellWidget(i, 2, spin)
-
-            # Remove Button
-            btn_del = QPushButton("❌")
-            btn_del.setFixedWidth(30)
-            btn_del.clicked.connect(lambda _, idx=i: self._on_remove_queue_item(idx))
-            self.tbl_queue.setCellWidget(i, 3, btn_del)
-
-        self._regenerate_a4_preview()
-
-    def _on_queue_copies_changed(self, idx: int, copies: int):
-        if 0 <= idx < len(self.print_queue):
-            self.print_queue[idx]["copies"] = copies
-            self._regenerate_a4_preview()
-
-    def _on_remove_queue_item(self, idx: int):
-        if 0 <= idx < len(self.print_queue):
-            self.print_queue.pop(idx)
-            self._refresh_queue_table()
-
-    def _on_clear_queue(self):
-        self.print_queue.clear()
-        self._refresh_queue_table()
-
-    def _regenerate_a4_preview(self):
-        margin_mm = self.spin_margin.value()
-        gap_mm = self.spin_gap.value()
-        cut_lines = self.chk_cut_lines.isChecked()
-
-        sheet, placed, overflow = printer.generate_a4_sheet(
-            queue_items=self.print_queue,
-            margin_mm=margin_mm,
-            gap_mm=gap_mm,
-            draw_cut_lines=cut_lines
-        )
-        self._cached_a4_sheet = sheet
-        self.lbl_queue_status.setText(f"Placed: {placed} photos | Overflow: {overflow} photos")
-
-        self.a4_canvas.set_pixmap(pil_to_pixmap(sheet), keep_roi=False)
-        self.a4_canvas.fit_image()
-
-    def _on_print_hardware(self):
-        if self._cached_a4_sheet is None:
-            self._regenerate_a4_preview()
-        if self._cached_a4_sheet is None:
-            return
-
-        ok = printer.print_a4_hardware(self, self._cached_a4_sheet)
-        if ok:
-            self.statusBar().showMessage("Print job sent successfully to hardware printer!", 5000)
-
-    def _on_export_a4_png(self):
-        if self._cached_a4_sheet is None:
-            self._regenerate_a4_preview()
-        if self._cached_a4_sheet is None:
-            return
-
-        filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save A4 Sheet as PNG", "PhotoStudio_A4_300DPI.png",
-            "PNG Image (*.png)"
-        )
-        if filepath:
-            try:
-                printer.export_a4_png(self._cached_a4_sheet, filepath)
-                self.statusBar().showMessage(f"Exported A4 PNG: {filepath}", 4000)
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed saving A4 PNG:\n{e}")
-
-    def _on_export_a4_pdf(self):
-        if self._cached_a4_sheet is None:
-            self._regenerate_a4_preview()
-        if self._cached_a4_sheet is None:
-            return
-
-        filepath, _ = QFileDialog.getSaveFileName(
-            self, "Save A4 Sheet as PDF", "PhotoStudio_A4_300DPI.pdf",
-            "PDF Document (*.pdf)"
-        )
-        if filepath:
-            try:
-                printer.export_a4_pdf(self._cached_a4_sheet, filepath)
-                self.statusBar().showMessage(f"Exported A4 PDF: {filepath}", 4000)
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed saving A4 PDF:\n{e}")
 
 
 def main():
