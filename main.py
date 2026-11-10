@@ -1071,6 +1071,64 @@ class PhotoStudioApp(QMainWindow):
             padding: 0 5px;
             color: #38bdf8;
         }
+        /* Radio Buttons & High-Contrast Selected Indicator */
+        QRadioButton {
+            color: #f4f4f5;
+            spacing: 8px;
+            font-size: 13px;
+            background-color: transparent;
+        }
+        QRadioButton::indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 9px;
+            border: 2px solid #52525b;
+            background-color: #27272a;
+        }
+        QRadioButton::indicator:hover {
+            border-color: #38bdf8;
+            background-color: #3f3f46;
+        }
+        QRadioButton::indicator:checked {
+            border: 2px solid #38bdf8;
+            background: qradialgradient(
+                cx: 0.5, cy: 0.5, radius: 0.45, fx: 0.5, fy: 0.5,
+                stop: 0 #38bdf8,
+                stop: 0.55 #38bdf8,
+                stop: 0.65 #27272a,
+                stop: 1.0 #27272a
+            );
+        }
+        QRadioButton::indicator:disabled {
+            border-color: #3f3f46;
+            background-color: #1f1f23;
+        }
+        /* Checkboxes & Checkmark Indicator */
+        QCheckBox {
+            color: #f4f4f5;
+            spacing: 8px;
+            font-size: 13px;
+            background-color: transparent;
+        }
+        QCheckBox::indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            border: 2px solid #52525b;
+            background-color: #27272a;
+        }
+        QCheckBox::indicator:hover {
+            border-color: #38bdf8;
+            background-color: #3f3f46;
+        }
+        QCheckBox::indicator:checked {
+            border: 2px solid #38bdf8;
+            background-color: #0284c7;
+        }
+        QCheckBox::indicator:disabled {
+            border-color: #3f3f46;
+            background-color: #1f1f23;
+        }
         QPushButton {
             background-color: #27272a;
             border: 1px solid #3f3f46;
