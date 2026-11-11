@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QSettings, QStandardPaths
 from PySide6.QtGui import QImage, QPixmap, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -33,6 +33,10 @@ from ui.primitives import AppButton
 from ui.theme import STUDIO_DARK_THEME, ThemeConfig, build_stylesheet, set_widget_props
 from workspace import PhotoWorkspace, RetouchState, CropState
 
+
+APP_ORGANIZATION = "PhotoStudio"
+APP_NAME = "PhotoStudioNative"
+SETTINGS_LAST_OPEN_DIR = "paths/last_open_dir"
 
 PRESET_MAP = {
     "Freeform / Original": None,
@@ -65,9 +69,14 @@ class SuperResWorker(QThread):
 class PhotoStudioApp(QMainWindow):
     """Main window composing Photo Studio panels and the A4 Print Studio tab."""
 
-    def __init__(self, theme: ThemeConfig = STUDIO_DARK_THEME):
+    def __init__(
+        self,
+        theme: ThemeConfig = STUDIO_DARK_THEME,
+        settings: Optional[QSettings] = None,
+    ):
         super().__init__()
         self.theme = theme
+        self.settings = settings if settings is not None else QSettings(APP_ORGANIZATION, APP_NAME)
         self.setWindowTitle("Native Windows ARM64 Photo Studio & Print Engine")
         self.resize(*self.theme.layout.window_default_size)
         self.setMinimumSize(*self.theme.layout.window_min_size)
@@ -261,12 +270,27 @@ class PhotoStudioApp(QMainWindow):
         thumb.thumbnail((px, px), Image.BILINEAR)
         return pil_to_pixmap(thumb)
 
+    def _get_initial_open_dir(self) -> str:
+        """Returns the last-used Add Photos directory if valid, else the OS Pictures folder."""
+        saved_dir = str(self.settings.value(SETTINGS_LAST_OPEN_DIR, "") or "").strip()
+        if saved_dir and Path(saved_dir).is_dir():
+            return saved_dir
+        pictures_dir = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)
+        if pictures_dir and Path(pictures_dir).is_dir():
+            return pictures_dir
+        return ""
+
     def _on_open_files(self):
+        start_dir = self._get_initial_open_dir()
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Open Image(s)", "",
+            self, "Open Image(s)", start_dir,
             "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff);;All Files (*.*)"
         )
         if files:
+            folder = str(Path(files[0]).parent)
+            if folder and Path(folder).is_dir():
+                self.settings.setValue(SETTINGS_LAST_OPEN_DIR, folder)
+                self.settings.sync()
             self._load_image_paths(files)
 
     def _load_image_paths(self, paths: List[str]):
@@ -1075,7 +1099,8 @@ class PhotoStudioApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("PhotoStudioNative")
+    app.setOrganizationName(APP_ORGANIZATION)
+    app.setApplicationName(APP_NAME)
 
     window = PhotoStudioApp()
     window.show()
