@@ -109,30 +109,30 @@ def build_stylesheet(theme: ThemeConfig) -> str:
     lg_font = t.scaled(t.size_lg)
     accent_text = c.primary.text_accent or c.primary.border
 
-    # Semantic button variants (preserving legacy #id selectors until panels finish migrating)
+    # Semantic button variants
     variant_rules = "".join([
         _button_variant_qss(
-            'QPushButton[variant="primary"], QPushButton#btn_send_queue, QPushButton#btn_apply_extract',
+            'QPushButton[variant="primary"]',
             c.primary, c, c.bg_surface, c.border_default,
         ),
         _button_variant_qss(
-            'QPushButton[variant="secondary"], QPushButton#btn_pick_color',
+            'QPushButton[variant="secondary"]',
             c.secondary, c, c.bg_disabled, c.border_subtle,
         ),
         _button_variant_qss(
-            'QPushButton[variant="success"], QPushButton#btn_commit_retouch, QPushButton#btn_print_hw',
+            'QPushButton[variant="success"]',
             c.success, c, c.bg_disabled, c.border_subtle,
         ),
         _button_variant_qss(
-            'QPushButton[variant="warning"], QPushButton#btn_apply_crop',
+            'QPushButton[variant="warning"]',
             c.warning, c, c.bg_surface, c.border_default,
         ),
         _button_variant_qss(
-            'QPushButton[variant="compute"], QPushButton#btn_apply_scale',
+            'QPushButton[variant="compute"]',
             c.compute, c, c.bg_surface, c.border_default,
         ),
         _button_variant_qss(
-            'QPushButton[variant="ai"], QPushButton#btn_ai_enhance',
+            'QPushButton[variant="ai"]',
             c.ai, c, c.bg_surface, c.border_default,
         ),
     ])
@@ -143,7 +143,7 @@ def build_stylesheet(theme: ThemeConfig) -> str:
         _button_size_qss("lg", ctrl.btn_lg),
         _button_size_qss("xl", ctrl.btn_xl),
         f"""
-QPushButton[variant="segmented"], QPushButton.crop-mode-btn {{
+QPushButton[variant="segmented"] {{
     background-color: {c.bg_surface};
     border: 1px solid {c.border_default};
     border-radius: {r.md}px;
@@ -151,13 +151,13 @@ QPushButton[variant="segmented"], QPushButton.crop-mode-btn {{
     color: {c.text_muted};
     font-weight: 500;
 }}
-QPushButton[variant="segmented"]:checked, QPushButton.crop-mode-btn:checked {{
+QPushButton[variant="segmented"]:checked {{
     background-color: {c.primary.bg};
     border-color: {c.primary.border};
     color: {c.text_on_accent};
     font-weight: bold;
 }}
-QPushButton[variant="segmented"]:hover:!checked, QPushButton.crop-mode-btn:hover:!checked {{
+QPushButton[variant="segmented"]:hover:!checked {{
     background-color: {c.bg_elevated};
     color: {c.text_primary};
 }}
@@ -317,16 +317,6 @@ QPushButton:disabled {{
 }}
 {variant_rules}
 {size_rules}
-/* Legacy size rules for existing #btn_* IDs until panels migrate */
-QPushButton#btn_apply_crop,
-QPushButton#btn_apply_extract,
-QPushButton#btn_apply_scale,
-QPushButton#btn_ai_enhance {{
-    padding: {ctrl.btn_lg.pad_v}px {ctrl.btn_lg.pad_h}px;
-}}
-QPushButton#btn_print_hw {{
-    padding: {ctrl.btn_xl.pad_v}px {ctrl.btn_xl.pad_h}px;
-}}
 /* Inputs & Collections */
 QComboBox, QSpinBox, QDoubleSpinBox {{
     background-color: {c.bg_surface};

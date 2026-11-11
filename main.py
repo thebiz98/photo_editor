@@ -93,7 +93,10 @@ class PhotoStudioApp(QMainWindow):
         self.tabs.addTab(self.tab_studio, "📸 Photo Studio")
 
         # Tab 2: A4 Print Studio
-        self.tab_printer = PrintStudioTab(status_bar_callback=self.statusBar().showMessage)
+        self.tab_printer = PrintStudioTab(
+            status_bar_callback=self.statusBar().showMessage,
+            theme=self.theme,
+        )
         self.tabs.addTab(self.tab_printer, "🖨️ A4 Print Studio")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
