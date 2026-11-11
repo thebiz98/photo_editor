@@ -204,17 +204,19 @@ class PhotoStudioApp(QMainWindow):
         grp_preset_layout = QVBoxLayout(grp_preset)
         grp_preset_layout.setSpacing(6)
 
-        # Mode Selector Buttons
+        # Mode Selector Buttons (short labels so neither clips at 240px panel width)
         mode_row = QHBoxLayout()
         mode_row.setSpacing(4)
-        self.btn_mode_box_crop = QPushButton("✂️ Standard Crop")
+        self.btn_mode_box_crop = QPushButton("✂️ Crop")
         self.btn_mode_box_crop.setCheckable(True)
         self.btn_mode_box_crop.setChecked(True)
         self.btn_mode_box_crop.setProperty("class", "crop-mode-btn")
+        self.btn_mode_box_crop.setToolTip("Standard rectangular crop with physical presets and aspect locking")
 
-        self.btn_mode_perspective = QPushButton("📐 Straighten (De-skew)")
+        self.btn_mode_perspective = QPushButton("📐 Straighten")
         self.btn_mode_perspective.setCheckable(True)
         self.btn_mode_perspective.setProperty("class", "crop-mode-btn")
+        self.btn_mode_perspective.setToolTip("Drag the 4 corner pins onto your ID/document corners (amber TOP edge = Width)")
 
         self.bg_crop_mode = QButtonGroup(self)
         self.bg_crop_mode.setExclusive(True)
@@ -226,25 +228,27 @@ class PhotoStudioApp(QMainWindow):
         mode_row.addWidget(self.btn_mode_perspective)
         grp_preset_layout.addLayout(mode_row)
 
-        # Mode 1 Container: Standard Box Crop Controls
-        self.container_box_crop = QWidget()
-        box_crop_layout = QVBoxLayout(self.container_box_crop)
-        box_crop_layout.setContentsMargins(0, 2, 0, 0)
-        box_crop_layout.setSpacing(5)
+        # Crop-only Presets container (hidden in Straighten mode)
+        self.container_presets = QWidget()
+        presets_layout = QVBoxLayout(self.container_presets)
+        presets_layout.setContentsMargins(0, 0, 0, 0)
+        presets_layout.setSpacing(4)
 
         self.combo_presets = NoWheelComboBox()
         for preset_name in PRESET_MAP.keys():
             self.combo_presets.addItem(preset_name)
         self.combo_presets.currentTextChanged.connect(self._on_preset_changed)
-        box_crop_layout.addWidget(self.combo_presets)
+        presets_layout.addWidget(self.combo_presets)
+        grp_preset_layout.addWidget(self.container_presets)
 
+        # Shared Unit / Width / Height controls reused by both Crop and Straighten modes
         unit_row = QHBoxLayout()
         unit_row.addWidget(QLabel("Unit:"))
         self.combo_unit = NoWheelComboBox()
         self.combo_unit.addItems(["mm", "in", "px"])
         self.combo_unit.currentTextChanged.connect(self._on_unit_changed)
         unit_row.addWidget(self.combo_unit)
-        box_crop_layout.addLayout(unit_row)
+        grp_preset_layout.addLayout(unit_row)
 
         dim_grid = QGridLayout()
         dim_grid.setContentsMargins(0, 2, 0, 0)
@@ -272,7 +276,13 @@ class PhotoStudioApp(QMainWindow):
         dim_grid.addWidget(self.spin_custom_w, 0, 1)
         dim_grid.addWidget(lbl_h, 1, 0)
         dim_grid.addWidget(self.spin_custom_h, 1, 1)
-        box_crop_layout.addLayout(dim_grid)
+        grp_preset_layout.addLayout(dim_grid)
+
+        # Mode 1 Actions: Standard Crop
+        self.container_box_crop = QWidget()
+        box_crop_layout = QVBoxLayout(self.container_box_crop)
+        box_crop_layout.setContentsMargins(0, 2, 0, 0)
+        box_crop_layout.setSpacing(5)
 
         self.btn_apply_crop = QPushButton("✂️ Apply Crop / Dimensions")
         self.btn_apply_crop.setObjectName("btn_apply_crop")
@@ -281,31 +291,35 @@ class PhotoStudioApp(QMainWindow):
 
         grp_preset_layout.addWidget(self.container_box_crop)
 
-        # Mode 2 Container: Perspective Extraction Controls
+        # Mode 2 Actions: Straighten / Perspective Extraction
         self.container_perspective = QWidget()
         persp_layout = QVBoxLayout(self.container_perspective)
         persp_layout.setContentsMargins(0, 2, 0, 0)
         persp_layout.setSpacing(6)
 
-        lbl_persp_info = QLabel("📍 Drag the 4 corner pins to the corners of your ID card or document to rectify it.")
-        lbl_persp_info.setWordWrap(True)
-        lbl_persp_info.setStyleSheet("color: #a1a1aa; font-size: 11px; padding: 2px 0;")
-        persp_layout.addWidget(lbl_persp_info)
+        self.chk_apply_size = QCheckBox("Apply Size")
+        self.chk_apply_size.setChecked(False)
+        self.chk_apply_size.setToolTip(
+            "When checked, fits the extracted selection to Width × Height above (300 DPI for mm/in). "
+            "When unchecked, extracts at natural pixel resolution."
+        )
+        persp_layout.addWidget(self.chk_apply_size)
 
-        self.lbl_persp_dimensions = QLabel("📐 Extracted: ~Auto / Natural")
-        self.lbl_persp_dimensions.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 12px;")
-        persp_layout.addWidget(self.lbl_persp_dimensions)
+        persp_btn_row = QHBoxLayout()
+        persp_btn_row.setSpacing(6)
 
-        self.btn_apply_extract = QPushButton("🪄 Extract & Straighten")
+        self.btn_reset_pins = QPushButton("🔄 Reset")
+        self.btn_reset_pins.setToolTip("Re-centers the 4 perspective pins on the image")
+        self.btn_reset_pins.clicked.connect(self._on_reset_perspective_pins)
+
+        self.btn_apply_extract = QPushButton("🪄 Extract")
         self.btn_apply_extract.setObjectName("btn_apply_extract")
         self.btn_apply_extract.setToolTip("Rectifies slanted ID card/document into a flat rectangular photo")
         self.btn_apply_extract.clicked.connect(self._on_apply_extract)
-        persp_layout.addWidget(self.btn_apply_extract)
 
-        self.btn_reset_pins = QPushButton("🔄 Reset Corner Pins")
-        self.btn_reset_pins.setToolTip("Re-centers the 4 perspective pins on the image")
-        self.btn_reset_pins.clicked.connect(self._on_reset_perspective_pins)
-        persp_layout.addWidget(self.btn_reset_pins)
+        persp_btn_row.addWidget(self.btn_reset_pins)
+        persp_btn_row.addWidget(self.btn_apply_extract)
+        persp_layout.addLayout(persp_btn_row)
 
         self.container_perspective.setVisible(False)
         grp_preset_layout.addWidget(self.container_perspective)
@@ -380,7 +394,6 @@ class PhotoStudioApp(QMainWindow):
         # Canvas
         self.canvas = InteractiveCanvas()
         self.canvas.roiChanged.connect(self._on_canvas_roi_changed)
-        self.canvas.quadChanged.connect(self._on_canvas_quad_changed)
         self.canvas.filesDropped.connect(self._load_image_paths)
         center_layout.addWidget(self.canvas)
 
@@ -696,11 +709,6 @@ class PhotoStudioApp(QMainWindow):
             self.btn_undo.setEnabled(len(item.get("history", [])) > 0)
         if hasattr(self, "btn_apply_extract"):
             self.btn_apply_extract.setEnabled(True)
-            if self.canvas.crop_mode == "perspective":
-                quad = self.canvas.get_perspective_quad()
-                if quad:
-                    w, h = transforms.calculate_natural_quad_dimensions(quad)
-                    self.lbl_persp_dimensions.setText(f"📐 Extracted: ~{w} × {h} px")
 
     def _push_undo_snapshot(self, item: Dict[str, Any], desc: str):
         """Pushes a deep snapshot of the current photo state into its undo history stack."""
@@ -1006,11 +1014,6 @@ class PhotoStudioApp(QMainWindow):
             self.workspace_photos[self.current_photo_idx]["roi"] = box
         self._trigger_render()
 
-    def _on_canvas_quad_changed(self, points: List[Tuple[float, float]]):
-        if self.current_photo_idx >= 0 and self.canvas.crop_mode == "perspective" and len(points) == 4:
-            w, h = transforms.calculate_natural_quad_dimensions(points)
-            self.lbl_persp_dimensions.setText(f"📐 Extracted: ~{w} × {h} px")
-
     def _on_reset_roi(self):
         if self.canvas.crop_mode == "perspective":
             self.canvas.reset_perspective_quad()
@@ -1021,32 +1024,60 @@ class PhotoStudioApp(QMainWindow):
                 self.workspace_photos[self.current_photo_idx]["roi"] = None
             self._trigger_render()
 
+    def _switch_to_crop_mode(self, auto_spawn_box: bool = True):
+        """Activates standard Crop UI and canvas mode."""
+        self.container_perspective.setVisible(False)
+        self.container_presets.setVisible(True)
+        self.container_box_crop.setVisible(True)
+        self.canvas.set_crop_mode("standard")
+
+        preset = self.combo_presets.currentText()
+        if preset == "Freeform / Original":
+            self.canvas.set_aspect_ratio(None)
+            self.btn_apply_crop.setEnabled(self.canvas.get_roi_box() is not None)
+        else:
+            w_mm, h_mm = self._get_current_dimensions_in_mm()
+            aspect = w_mm / h_mm if h_mm > 0 else 1.0
+            self.canvas.set_aspect_ratio(aspect)
+            self.btn_apply_crop.setEnabled(True)
+            if auto_spawn_box and not self.canvas.get_roi_box() and self.current_photo_idx >= 0:
+                self.canvas.spawn_centered_box(aspect_ratio=aspect)
+
     def _on_crop_mode_toggled(self, mode_id: int):
-        if mode_id == 1:  # Perspective Straighten
+        if mode_id == 1:  # Straighten
+            self.container_presets.setVisible(False)
             self.container_box_crop.setVisible(False)
             self.container_perspective.setVisible(True)
             self.canvas.set_crop_mode("perspective")
             self.btn_apply_extract.setEnabled(self.current_photo_idx >= 0)
-            quad = self.canvas.get_perspective_quad()
-            if quad:
-                w, h = transforms.calculate_natural_quad_dimensions(quad)
-                self.lbl_persp_dimensions.setText(f"📐 Extracted: ~{w} × {h} px")
-            self.statusBar().showMessage("Perspective mode: Drag the 4 pins to the corners of your ID card/document.", 4000)
-        else:  # Standard Box Crop
-            self.container_perspective.setVisible(False)
-            self.container_box_crop.setVisible(True)
-            self.canvas.set_crop_mode("standard")
-            preset = self.combo_presets.currentText()
-            if preset != "Freeform / Original" and not self.canvas.get_roi_box() and self.current_photo_idx >= 0:
-                w_mm, h_mm = self._get_current_dimensions_in_mm()
-                aspect = w_mm / h_mm if h_mm > 0 else 1.0
-                self.canvas.spawn_centered_box(aspect_ratio=aspect)
-            self.statusBar().showMessage("Standard box crop mode active.", 3000)
+            self.statusBar().showMessage("Straighten mode: Drag the 4 corner pins (amber TOP = Width).", 4000)
+        else:  # Crop
+            self._switch_to_crop_mode(auto_spawn_box=True)
+            self.statusBar().showMessage("Crop mode active.", 3000)
 
     def _on_reset_perspective_pins(self):
         if self.canvas.crop_mode == "perspective":
             self.canvas.reset_perspective_quad()
             self.statusBar().showMessage("Reset 4 perspective pins to center.", 3000)
+
+    def _finalize_geometry_edit(self, item: Dict[str, Any]):
+        """Refreshes workspace thumbnail, clears canvas overlays, re-renders, and updates rescale UI."""
+        thumb = item["baked"].copy()
+        thumb.thumbnail((40, 40), Image.BILINEAR)
+        list_item = self.list_photos.item(self.current_photo_idx)
+        if list_item:
+            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
+        self._block_signals = True
+        try:
+            self.canvas.set_perspective_quad(None)
+            self.canvas.set_roi_box(None)
+        finally:
+            self._block_signals = False
+
+        self._trigger_render()
+        self.canvas.fit_image()
+        self._update_rescale_ui()
 
     def _on_apply_extract(self):
         if self.current_photo_idx < 0:
@@ -1059,41 +1090,43 @@ class PhotoStudioApp(QMainWindow):
             QMessageBox.warning(self, "Invalid Selection", "Please position the 4 corner pins around the card or document.")
             return
 
+        apply_size = self.chk_apply_size.isChecked()
+        target_px = None
+        w_mm = None
+        h_mm = None
+
+        if apply_size:
+            target_px, w_mm, h_mm = self._get_target_dimensions_px_and_mm()
+            if not target_px:
+                QMessageBox.warning(self, "Invalid Size", "Width and Height must be greater than zero.")
+                return
+
         w_nat, h_nat = transforms.calculate_natural_quad_dimensions(quad)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self._push_undo_snapshot(item, f"Straighten & Extract ID ({w_nat}x{h_nat} px)")
-            item["baked"] = engine.extract_perspective_quad(item["baked"], quad)
-            item["orig"] = engine.extract_perspective_quad(item["orig"], quad)
-            item["target_w_mm"] = None
-            item["target_h_mm"] = None
+            desc = (
+                f"Extract & Fit ({target_px[0]}x{target_px[1]} px)"
+                if target_px else
+                f"Straighten & Extract ({w_nat}x{h_nat} px)"
+            )
+            self._push_undo_snapshot(item, desc)
+            item["baked"] = engine.extract_perspective_quad(item["baked"], quad, target_size=target_px)
+            item["orig"] = engine.extract_perspective_quad(item["orig"], quad, target_size=target_px)
+            item["target_w_mm"] = w_mm if target_px else None
+            item["target_h_mm"] = h_mm if target_px else None
             item["roi"] = None
 
-            thumb = item["baked"].copy()
-            thumb.thumbnail((40, 40), Image.BILINEAR)
-            list_item = self.list_photos.item(self.current_photo_idx)
-            if list_item:
-                list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+            self._finalize_geometry_edit(item)
 
-            self._block_signals = True
-            try:
-                self.canvas.set_perspective_quad(None)
-                self.canvas.set_roi_box(None)
-            finally:
-                self._block_signals = False
-
-            self._trigger_render()
-            self.canvas.fit_image()
-            self._update_rescale_ui()
-
-            # Switch back to Standard Crop mode automatically
+            # Switch back to Crop mode cleanly without spawning a box over the extracted image
             self.btn_mode_box_crop.setChecked(True)
-            self._on_crop_mode_toggled(0)
+            self._switch_to_crop_mode(auto_spawn_box=False)
 
-            self.statusBar().showMessage(
-                f"🪄 Extracted & straightened ID to {item['baked'].width} x {item['baked'].height} px at native resolution",
-                6000
-            )
+            if target_px:
+                msg = f"🪄 Extracted & fitted to {item['baked'].width} x {item['baked'].height} px ({w_mm:.1f} x {h_mm:.1f} mm)"
+            else:
+                msg = f"🪄 Extracted & straightened to {item['baked'].width} x {item['baked'].height} px (natural)"
+            self.statusBar().showMessage(msg, 6000)
         except Exception as e:
             QMessageBox.critical(self, "Extraction Error", f"Failed to straighten and extract image:\n{e}")
         finally:
@@ -1130,6 +1163,24 @@ class PhotoStudioApp(QMainWindow):
     def _get_current_dimensions_in_mm(self) -> Tuple[float, float]:
         """Returns the current width and height in millimeters."""
         return (self._dim_w_mm, self._dim_h_mm)
+
+    def _get_target_dimensions_px_and_mm(self) -> Tuple[Optional[Tuple[int, int]], float, float]:
+        """
+        Computes ((target_w_px, target_h_px), w_mm, h_mm) from the shared Unit/Width/Height controls.
+        Uses exact spinbox values directly when unit is 'px', and 300 DPI conversion for 'mm'/'in'.
+        """
+        w_mm, h_mm = self._get_current_dimensions_in_mm()
+        if w_mm <= 0 or h_mm <= 0:
+            return (None, w_mm, h_mm)
+
+        if self._current_unit == "px":
+            target_w_px = max(1, int(round(self.spin_custom_w.value())))
+            target_h_px = max(1, int(round(self.spin_custom_h.value())))
+        else:
+            target_w_px = max(1, int(round(w_mm * engine.PX_PER_MM)))
+            target_h_px = max(1, int(round(h_mm * engine.PX_PER_MM)))
+
+        return ((target_w_px, target_h_px), w_mm, h_mm)
 
     def _convert_mm_to_unit(self, val_mm: float, target_unit: str) -> float:
         """Converts millimeters to target unit (mm, in, or px)."""
@@ -1248,6 +1299,10 @@ class PhotoStudioApp(QMainWindow):
             finally:
                 self._block_signals = False
 
+        # Do not modify or spawn a rectangular crop box while in Straighten mode
+        if self.canvas.crop_mode != "standard":
+            return
+
         self.btn_apply_crop.setEnabled(True)
 
         if self._dim_w_mm > 0 and self._dim_h_mm > 0:
@@ -1279,14 +1334,12 @@ class PhotoStudioApp(QMainWindow):
             w, h = item["baked"].size
             roi_box = (0, 0, w, h)
 
-        w_mm, h_mm = self._get_current_dimensions_in_mm()
         preset = self.combo_presets.currentText()
-
         target_px = None
-        if preset != "Freeform / Original" and w_mm > 0 and h_mm > 0:
-            target_w_px = int(round(w_mm * engine.PX_PER_MM))
-            target_h_px = int(round(h_mm * engine.PX_PER_MM))
-            target_px = (target_w_px, target_h_px)
+        w_mm = 0.0
+        h_mm = 0.0
+        if preset != "Freeform / Original":
+            target_px, w_mm, h_mm = self._get_target_dimensions_px_and_mm()
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -1294,24 +1347,11 @@ class PhotoStudioApp(QMainWindow):
             self._push_undo_snapshot(item, desc)
             item["baked"] = engine.crop_and_resize(item["baked"], roi_box, target_px)
             item["orig"] = engine.crop_and_resize(item["orig"], roi_box, target_px)
-            item["target_w_mm"] = w_mm if preset != "Freeform / Original" else None
-            item["target_h_mm"] = h_mm if preset != "Freeform / Original" else None
+            item["target_w_mm"] = w_mm if target_px else None
+            item["target_h_mm"] = h_mm if target_px else None
             item["roi"] = None
 
-            thumb = item["baked"].copy()
-            thumb.thumbnail((40, 40), Image.BILINEAR)
-            list_item = self.list_photos.item(self.current_photo_idx)
-            if list_item:
-                list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
-
-            self._block_signals = True
-            try:
-                self.canvas.set_roi_box(None)
-            finally:
-                self._block_signals = False
-
-            self._trigger_render()
-            self.canvas.fit_image()
+            self._finalize_geometry_edit(item)
 
             dim_text = f" ({w_mm:.1f} x {h_mm:.1f} mm)" if target_px else ""
             self.statusBar().showMessage(

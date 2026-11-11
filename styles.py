@@ -159,7 +159,7 @@ QPushButton.crop-mode-btn {
     background-color: #27272a;
     border: 1px solid #3f3f46;
     border-radius: 4px;
-    padding: 5px 8px;
+    padding: 5px 4px;
     color: #a1a1aa;
     font-weight: 500;
 }
