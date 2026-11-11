@@ -52,7 +52,12 @@ def calculate_perspective_coeffs(
     b_vec = np.array(vector, dtype=np.float64)
 
     # Solve the 8x8 system of linear equations
-    coeffs = np.linalg.solve(a_mat, b_vec)
+    try:
+        coeffs = np.linalg.solve(a_mat, b_vec)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(
+            "Corner pins cannot be collinear or collapsed; please form a valid quadrilateral."
+        ) from exc
     return tuple(coeffs.tolist())
 
 
@@ -107,19 +112,40 @@ def extract_perspective_quad(
     """
     Extracts and rectifies a 4-point quadrilateral [TL, TR, BR, BL] from img into a straightened rectangle.
     If target_size is None, natural unconstrained pixel dimensions are automatically calculated.
+    When downscaling a high-resolution selection to compact print dimensions, uses 2x supersampling
+    followed by Lanczos resampling to prevent aliasing on fine card text.
     """
+    nat_w, nat_h = calculate_natural_quad_dimensions(source_quad)
     if target_size is None:
-        target_w, target_h = calculate_natural_quad_dimensions(source_quad)
+        target_w, target_h = nat_w, nat_h
     else:
         target_w, target_h = int(round(target_size[0])), int(round(target_size[1]))
 
-    coeffs = calculate_perspective_coeffs(source_quad, target_w, target_h)
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError(f"target dimensions must be positive, got ({target_w}, {target_h})")
 
-    # Use BICUBIC resampling for sharp, smooth document/photo rectification
-    rectified = img.transform(
+    needs_antialias = (
+        target_size is not None
+        and (nat_w > target_w * 1.5 or nat_h > target_h * 1.5)
+        and target_w * 2 <= 4096
+        and target_h * 2 <= 4096
+    )
+
+    if needs_antialias:
+        inter_w, inter_h = target_w * 2, target_h * 2
+        coeffs = calculate_perspective_coeffs(source_quad, inter_w, inter_h)
+        rectified = img.transform(
+            (inter_w, inter_h),
+            Image.Transform.PERSPECTIVE,
+            coeffs,
+            Image.Resampling.BICUBIC,
+        )
+        return rectified.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+    coeffs = calculate_perspective_coeffs(source_quad, target_w, target_h)
+    return img.transform(
         (target_w, target_h),
         Image.Transform.PERSPECTIVE,
         coeffs,
-        Image.Resampling.BICUBIC
+        Image.Resampling.BICUBIC,
     )
-    return rectified
