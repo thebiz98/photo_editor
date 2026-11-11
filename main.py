@@ -32,6 +32,7 @@ import printer
 import rescaler
 import transforms
 from styles import DARK_THEME_QSS
+from workspace import PhotoWorkspace, RetouchState, CropState
 
 
 PRESET_MAP = {
@@ -99,10 +100,10 @@ class PhotoStudioApp(QMainWindow):
         self.resize(1340, 880)
         self.setMinimumSize(1000, 700)
 
-        # In-memory photo workspace
-        # List of items: {"id": int, "name": str, "orig": PIL.Image, "baked": PIL.Image, "processed": PIL.Image, "roi": tuple, "params": dict}
-        self.workspace_photos: List[Dict[str, Any]] = []
+        # In-memory isolated per-photo workspaces
+        self.workspace_photos: List[PhotoWorkspace] = []
         self.current_photo_idx: int = -1
+        self._next_photo_id: int = 0
         self._block_signals: bool = False
         self._custom_bg_color: Tuple[int, int, int] = (255, 255, 255)
         self._current_unit: str = "mm"
@@ -394,6 +395,7 @@ class PhotoStudioApp(QMainWindow):
         # Canvas
         self.canvas = InteractiveCanvas()
         self.canvas.roiChanged.connect(self._on_canvas_roi_changed)
+        self.canvas.quadChanged.connect(self._on_canvas_quad_changed)
         self.canvas.filesDropped.connect(self._load_image_paths)
         center_layout.addWidget(self.canvas)
 
@@ -475,6 +477,7 @@ class PhotoStudioApp(QMainWindow):
         self.slider_feather.valueChanged.connect(self._on_feather_changed)
         grp_ai_layout.addWidget(self.slider_feather)
 
+        self._sync_ai_controls_enabled()
         right_layout.addWidget(grp_ai)
 
         # Lighting & Color Adjustments Group - full sliders with reduced panel length
@@ -640,24 +643,27 @@ class PhotoStudioApp(QMainWindow):
             if paths:
                 self._load_image_paths(paths)
 
+    def _current_workspace(self) -> Optional[PhotoWorkspace]:
+        """Returns the active PhotoWorkspace, or None if no photo is selected."""
+        if 0 <= self.current_photo_idx < len(self.workspace_photos):
+            return self.workspace_photos[self.current_photo_idx]
+        return None
+
+    def _refresh_thumbnail(self, row: int, img: Image.Image) -> None:
+        """Updates the workspace list icon for the given row."""
+        if 0 <= row < self.list_photos.count():
+            thumb = img.copy()
+            thumb.thumbnail((48, 48), Image.BILINEAR)
+            list_item = self.list_photos.item(row)
+            if list_item:
+                list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+
     def _add_photo_to_workspace(self, img: Image.Image, name: str) -> int:
         idx = len(self.workspace_photos)
-        item_data = {
-            "id": idx,
-            "name": name,
-            "orig_initial": img.copy(),
-            "orig": img.copy(),
-            "baked": img.copy(),
-            "processed": img.copy(),
-            "roi": None,
-            "target_w_mm": None,
-            "target_h_mm": None,
-            "params": self._get_current_params(),
-            "history": []
-        }
-        self.workspace_photos.append(item_data)
+        ws = PhotoWorkspace.create(self._next_photo_id, img, name)
+        self._next_photo_id += 1
+        self.workspace_photos.append(ws)
 
-        # Create thumbnail for list
         thumb = img.copy()
         thumb.thumbnail((48, 48), Image.BILINEAR)
         pix = pil_to_pixmap(thumb)
@@ -669,17 +675,142 @@ class PhotoStudioApp(QMainWindow):
     def _on_remove_photo(self):
         row = self.list_photos.currentRow()
         if 0 <= row < len(self.workspace_photos):
+            # Invalidate current_photo_idx and suppress intermediate signals while mutating
+            # QListWidget so the remaining item is always hydrated cleanly without leaking state.
+            self.current_photo_idx = -1
             self.workspace_photos.pop(row)
-            self.list_photos.takeItem(row)
+            self.list_photos.blockSignals(True)
+            try:
+                self.list_photos.takeItem(row)
+                if self.workspace_photos:
+                    new_row = min(row, len(self.workspace_photos) - 1)
+                    self.list_photos.setCurrentRow(new_row)
+            finally:
+                self.list_photos.blockSignals(False)
+
             if self.workspace_photos:
-                new_row = min(row, len(self.workspace_photos) - 1)
-                self.list_photos.setCurrentRow(new_row)
+                self._on_photo_selected(self.list_photos.currentRow())
             else:
-                self.current_photo_idx = -1
+                self._reset_controls_to_defaults()
                 self.canvas.set_pixmap(QPixmap())
                 self._update_rescale_ui()
+                if hasattr(self, "btn_undo"):
+                    self.btn_undo.setEnabled(False)
+                if hasattr(self, "btn_apply_extract"):
+                    self.btn_apply_extract.setEnabled(False)
+
+    def _sync_ui_to_workspace(self, ws: PhotoWorkspace) -> None:
+        """Persists live UI control values and canvas overlays into the given workspace."""
+        ws.retouch = self._collect_retouch_state()
+        ws.crop.crop_mode = self.canvas.crop_mode
+        ws.crop.preset_name = self.combo_presets.currentText()
+        ws.crop.unit = self._current_unit
+        ws.crop.dim_w_mm = self._dim_w_mm
+        ws.crop.dim_h_mm = self._dim_h_mm
+        ws.crop.apply_size = self.chk_apply_size.isChecked()
+        ws.crop.rescale_pct = self.spin_rescale_pct.value()
+        if self.canvas.crop_mode == "perspective":
+            ws.crop.quad = self.canvas.get_perspective_quad()
+        else:
+            ws.crop.roi = self.canvas.get_roi_box()
+
+    def _load_retouch_to_ui(self, retouch: RetouchState) -> None:
+        """Applies a RetouchState to AI and Lighting controls (caller manages _block_signals)."""
+        self._custom_bg_color = retouch.custom_color
+        self.chk_remove_bg.setChecked(retouch.remove_bg)
+        self.combo_ai_model.setCurrentIndex(1 if "MODNet" in retouch.ai_model else 0)
+        self.combo_backdrop.setCurrentText(retouch.backdrop)
+        self.slider_choke.setValue(retouch.choke_px)
+        self.lbl_choke_val.setText(f"{retouch.choke_px} px")
+        feather_slider = int(round(retouch.feather_px * 10))
+        self.slider_feather.setValue(feather_slider)
+        self.lbl_feather_val.setText(f"{retouch.feather_px:.1f} px")
+        self._sync_ai_controls_enabled()
+
+        bright_val = int(round(retouch.brightness * 100))
+        contrast_val = int(round(retouch.contrast * 100))
+        sat_val = int(round(retouch.saturation * 100))
+        sharp_val = int(round(retouch.sharpness * 100))
+        warmth_val = int(retouch.warmth)
+
+        self.slider_bright.setValue(bright_val)
+        self.slider_contrast.setValue(contrast_val)
+        self.slider_sat.setValue(sat_val)
+        self.slider_sharp.setValue(sharp_val)
+        self.slider_warmth.setValue(warmth_val)
+        self.lbl_bright.setText(f"{bright_val}%")
+        self.lbl_contrast.setText(f"{contrast_val}%")
+        self.lbl_sat.setText(f"{sat_val}%")
+        self.lbl_sharp.setText(f"{sharp_val}%")
+        self.lbl_warmth.setText(f"{warmth_val}")
+
+        if retouch.edit_inside_box:
+            self.radio_mode_patch.setChecked(True)
+        else:
+            self.radio_mode_whole.setChecked(True)
+
+    def _load_crop_to_ui(self, crop: CropState, restore_pixmap: Optional[Image.Image] = None) -> None:
+        """Applies a CropState to Crop/Straighten controls and canvas overlays."""
+        self._current_unit = crop.unit
+        self._dim_w_mm = crop.dim_w_mm
+        self._dim_h_mm = crop.dim_h_mm
+        self.combo_unit.setCurrentText(crop.unit)
+        self._configure_unit_spinboxes(crop.unit)
+        self.spin_custom_w.setValue(self._convert_mm_to_unit(crop.dim_w_mm, crop.unit))
+        self.spin_custom_h.setValue(self._convert_mm_to_unit(crop.dim_h_mm, crop.unit))
+        self.combo_presets.setCurrentText(crop.preset_name)
+        self.chk_apply_size.setChecked(crop.apply_size)
+        self.spin_rescale_pct.setValue(crop.rescale_pct)
+
+        if crop.preset_name == "Freeform / Original" or crop.dim_h_mm <= 0:
+            self.canvas.set_aspect_ratio(None)
+        else:
+            self.canvas.set_aspect_ratio(crop.dim_w_mm / crop.dim_h_mm)
+
+        self.canvas.crop_mode = crop.crop_mode
+        if restore_pixmap is not None:
+            self.canvas.set_pixmap(pil_to_pixmap(restore_pixmap), keep_roi=False)
+
+        if crop.crop_mode == "perspective":
+            self.btn_mode_perspective.setChecked(True)
+            self.container_presets.setVisible(False)
+            self.container_box_crop.setVisible(False)
+            self.container_perspective.setVisible(True)
+            if crop.quad:
+                self.canvas.set_perspective_quad(crop.quad)
+            elif self.canvas.pixmap_item and not self.canvas.quad_item:
+                self.canvas.spawn_centered_quad()
+        else:
+            self.btn_mode_box_crop.setChecked(True)
+            self.container_perspective.setVisible(False)
+            self.container_presets.setVisible(True)
+            self.container_box_crop.setVisible(True)
+            self.canvas.set_roi_box(crop.roi)
+
+        self._update_crop_button_state()
+
+    def _load_workspace_to_ui(self, ws: PhotoWorkspace) -> None:
+        """Hydrates all studio UI panels and canvas overlays from a PhotoWorkspace."""
+        self._block_signals = True
+        try:
+            self._load_retouch_to_ui(ws.retouch)
+            self._load_crop_to_ui(ws.crop, restore_pixmap=ws.baked)
+        finally:
+            self._block_signals = False
+
+    def _reset_controls_to_defaults(self) -> None:
+        """Resets UI controls to fresh neutral defaults when workspace is empty."""
+        self._block_signals = True
+        try:
+            self._load_retouch_to_ui(RetouchState())
+            self._load_crop_to_ui(CropState(), restore_pixmap=None)
+        finally:
+            self._block_signals = False
 
     def _on_photo_selected(self, row: int):
+        if 0 <= self.current_photo_idx < len(self.workspace_photos) and self.current_photo_idx != row:
+            self._sync_ui_to_workspace(self.workspace_photos[self.current_photo_idx])
+
         if row < 0 or row >= len(self.workspace_photos):
             self.current_photo_idx = -1
             self._update_rescale_ui()
@@ -688,153 +819,80 @@ class PhotoStudioApp(QMainWindow):
             return
 
         self.current_photo_idx = row
-        item = self.workspace_photos[row]
+        ws = self.workspace_photos[row]
 
-        # Load parameters
-        self._block_signals = True
-        try:
-            self.canvas.set_pixmap(pil_to_pixmap(item["baked"]), keep_roi=False)
-            if item["roi"]:
-                self.canvas.set_roi_box(item["roi"])
-            else:
-                self.canvas.set_roi_box(None)
-            self.spin_rescale_pct.setValue(100)
-        finally:
-            self._block_signals = False
+        self._load_workspace_to_ui(ws)
 
         self._trigger_render()
         self.canvas.fit_image()
         self._update_rescale_ui()
         if hasattr(self, "btn_undo"):
-            self.btn_undo.setEnabled(len(item.get("history", [])) > 0)
+            self.btn_undo.setEnabled(ws.has_undo())
         if hasattr(self, "btn_apply_extract"):
             self.btn_apply_extract.setEnabled(True)
 
-    def _push_undo_snapshot(self, item: Dict[str, Any], desc: str):
-        """Pushes a deep snapshot of the current photo state into its undo history stack."""
-        snapshot = {
-            "baked": item["baked"].copy(),
-            "orig": item["orig"].copy(),
-            "roi": item.get("roi"),
-            "target_w_mm": item.get("target_w_mm"),
-            "target_h_mm": item.get("target_h_mm"),
-            "dim_w_mm": self._dim_w_mm,
-            "dim_h_mm": self._dim_h_mm,
-            "current_unit": self._current_unit,
-            "preset": self.combo_presets.currentText(),
-            "desc": desc,
-        }
-        item.setdefault("history", []).append(snapshot)
-        if len(item["history"]) > 25:
-            item["history"].pop(0)
-        if hasattr(self, "btn_undo"):
-            self.btn_undo.setEnabled(True)
-
     def _on_undo(self):
-        """Reverts the last crop, rotation, or bake operation for the current photo."""
-        if self.current_photo_idx < 0:
+        """Reverts the last crop, rotation, rescale, or commit operation for the current photo."""
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        history = item.get("history", [])
-        if not history:
+        snapshot = ws.pop_undo()
+        if snapshot is None:
             self.statusBar().showMessage("Nothing to undo for this photo.", 3000)
             if hasattr(self, "btn_undo"):
                 self.btn_undo.setEnabled(False)
             return
 
-        snapshot = history.pop()
-        item["baked"] = snapshot["baked"]
-        item["orig"] = snapshot["orig"]
-        item["roi"] = snapshot["roi"]
-        item["target_w_mm"] = snapshot["target_w_mm"]
-        item["target_h_mm"] = snapshot["target_h_mm"]
-        self._dim_w_mm = snapshot["dim_w_mm"]
-        self._dim_h_mm = snapshot["dim_h_mm"]
-
         self._block_signals = True
         try:
-            if snapshot.get("current_unit"):
-                self._current_unit = snapshot["current_unit"]
-                self.combo_unit.setCurrentText(self._current_unit)
-            unit_w = self._convert_mm_to_unit(self._dim_w_mm, self._current_unit)
-            unit_h = self._convert_mm_to_unit(self._dim_h_mm, self._current_unit)
-            self.spin_custom_w.setValue(unit_w)
-            self.spin_custom_h.setValue(unit_h)
-            if snapshot.get("preset"):
-                self.combo_presets.setCurrentText(snapshot["preset"])
-            if item["roi"]:
-                self.canvas.set_roi_box(item["roi"])
-                self.btn_apply_crop.setEnabled(True)
-            else:
-                self.canvas.set_roi_box(None)
-                self.btn_apply_crop.setEnabled(False)
+            self._load_crop_to_ui(ws.crop, restore_pixmap=ws.baked)
         finally:
             self._block_signals = False
 
-        # Refresh thumbnail in workspace list
-        thumb = item["baked"].copy()
-        thumb.thumbnail((40, 40), Image.BILINEAR)
-        list_item = self.list_photos.item(self.current_photo_idx)
-        if list_item:
-            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
-
+        self._refresh_thumbnail(self.current_photo_idx, ws.baked)
         self._trigger_render()
         self.canvas.fit_image()
         self._update_rescale_ui()
-        self.statusBar().showMessage(f"↩️ Undid: {snapshot['desc']}", 4000)
+        self.statusBar().showMessage(f"↩️ Undid: {snapshot.desc}", 4000)
         if hasattr(self, "btn_undo"):
-            self.btn_undo.setEnabled(len(history) > 0)
+            self.btn_undo.setEnabled(ws.has_undo())
 
     def _on_revert_to_original(self):
         """Restores the current photo back to its pristine, unedited initial state."""
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        orig_init = item.get("orig_initial")
-        if orig_init is None:
-            orig_init = item["orig"]
 
-        # Push to undo history first so revert itself can be undone
-        self._push_undo_snapshot(item, "Revert to Original")
+        ws.revert_to_initial()
+        self._load_workspace_to_ui(ws)
 
-        item["baked"] = orig_init.copy()
-        item["orig"] = orig_init.copy()
-        item["roi"] = None
-        item["target_w_mm"] = None
-        item["target_h_mm"] = None
-
-        self._block_signals = True
-        try:
-            self.canvas.set_roi_box(None)
-            self.btn_apply_crop.setEnabled(False)
-            self.combo_presets.setCurrentText("Freeform / Original")
-        finally:
-            self._block_signals = False
-
-        thumb = item["baked"].copy()
-        thumb.thumbnail((40, 40), Image.BILINEAR)
-        list_item = self.list_photos.item(self.current_photo_idx)
-        if list_item:
-            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
-
+        self._refresh_thumbnail(self.current_photo_idx, ws.baked)
         self._trigger_render()
         self.canvas.fit_image()
         self._update_rescale_ui()
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(ws.has_undo())
         self.statusBar().showMessage("⏮️ Reverted photo to initial unedited state.", 5000)
 
     def _on_bake_edit(self):
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        if item.get("processed"):
-            self._push_undo_snapshot(item, "Bake Edits")
-            item["baked"] = item["processed"].copy()
-            item["roi"] = None
-            self.canvas.set_pixmap(pil_to_pixmap(item["baked"]), keep_roi=False)
-            self._on_reset_lighting()
-            self._on_reset_roi()
+        if ws.commit_retouch():
+            self._block_signals = True
+            try:
+                self.canvas.set_roi_box(None)
+                self._load_retouch_to_ui(ws.retouch)
+                self._update_crop_button_state()
+            finally:
+                self._block_signals = False
+
+            self._refresh_thumbnail(self.current_photo_idx, ws.baked)
+            self._trigger_render()
             self._update_rescale_ui()
-            self.statusBar().showMessage("Current edits baked successfully into base image", 4000)
+            if hasattr(self, "btn_undo"):
+                self.btn_undo.setEnabled(ws.has_undo())
+            self.statusBar().showMessage("✔️ Committed edits into base image and reset retouch controls.", 4000)
 
     # -------------------------------------------------------------------------
     # Resolution & Scaling Handlers (rescaler.py)
@@ -842,11 +900,11 @@ class PhotoStudioApp(QMainWindow):
 
     def _on_rescale_pct_changed(self, pct: int):
         """Calculates live target pixel readout and validates against safety ceiling."""
-        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+        ws = self._current_workspace()
+        if ws is None:
             self.lbl_target_res.setText("Result: No photo selected")
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        orig_w, orig_h = item["baked"].size
+        orig_w, orig_h = ws.baked.size
         target_w, target_h = rescaler.calculate_target_dimensions(orig_w, orig_h, pct)
 
         if not rescaler.is_within_safe_limits(target_w, target_h):
@@ -860,9 +918,9 @@ class PhotoStudioApp(QMainWindow):
 
     def _update_rescale_ui(self):
         """Refreshes the resolution readout and target calculation for active photo."""
-        if self.current_photo_idx >= 0 and self.current_photo_idx < len(self.workspace_photos):
-            item = self.workspace_photos[self.current_photo_idx]
-            w, h = item["baked"].size
+        ws = self._current_workspace()
+        if ws is not None:
+            w, h = ws.baked.size
             self.lbl_current_res.setText(f"Current: {w} x {h} px")
             self._on_rescale_pct_changed(self.spin_rescale_pct.value())
             self.btn_apply_scale.setEnabled(True)
@@ -890,48 +948,39 @@ class PhotoStudioApp(QMainWindow):
 
     def _on_apply_rescale(self):
         """Executes compute-based rescaling and registers snapshot to undo history."""
-        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+        ws = self._current_workspace()
+        if ws is None:
             return
         pct = self.spin_rescale_pct.value()
         if pct == 100:
             self.statusBar().showMessage("Scale is 100% (no changes applied).", 3000)
             return
 
-        item = self.workspace_photos[self.current_photo_idx]
-
         try:
-            # 1. Push undo snapshot FIRST so this operation is reversible via Ctrl+Z
-            self._push_undo_snapshot(item, f"Scale to {pct}%")
+            self._sync_ui_to_workspace(ws)
+            ws.push_undo(f"Scale to {pct}%")
 
-            # 2. Rescale image using rescaler module
-            scaled_img, (new_w, new_h) = rescaler.rescale_image(item["baked"], pct)
+            scaled_img, (new_w, new_h) = rescaler.rescale_image(ws.baked, pct)
+            ws.baked = scaled_img
+            ws.orig = scaled_img
+            ws.crop.roi = None
+            ws.crop.quad = None
+            ws.crop.rescale_pct = 100
 
-            # 3. Update working image & clear stale ROI
-            item["baked"] = scaled_img
-            item["orig"] = scaled_img
-            item["roi"] = None
+            self._refresh_thumbnail(self.current_photo_idx, scaled_img)
 
-            # 4. Refresh workspace list thumbnail
-            thumb = scaled_img.copy()
-            thumb.thumbnail((48, 48), Image.BILINEAR)
-            list_item = self.list_photos.item(self.current_photo_idx)
-            if list_item:
-                list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
-
-            # 5. Reset scale spinner back to 100% baseline for the new resolution
             self._block_signals = True
             try:
                 self.spin_rescale_pct.setValue(100)
             finally:
                 self._block_signals = False
 
-            # 6. Re-render canvas & update readouts
             self.canvas.set_pixmap(pil_to_pixmap(scaled_img), keep_roi=False)
             self._trigger_render()
             self.canvas.fit_image()
             self._update_rescale_ui()
+            self._update_crop_button_state()
 
-            # 7. Enable undo button and show confirmation
             if hasattr(self, "btn_undo"):
                 self.btn_undo.setEnabled(True)
             self.statusBar().showMessage(f"⚡ Rescaled to {pct}% ({new_w} x {new_h} px). Undo with Ctrl+Z.", 5000)
@@ -943,11 +992,11 @@ class PhotoStudioApp(QMainWindow):
 
     def _on_ai_enhance_clicked(self):
         """Launches non-blocking AI super-resolution in background thread."""
-        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
 
-        w, h = item["baked"].size
+        w, h = ws.baked.size
         if max(w, h) > rescaler.MAX_AI_INPUT_DIM:
             QMessageBox.information(
                 self, "Resolution Sufficient",
@@ -955,43 +1004,36 @@ class PhotoStudioApp(QMainWindow):
             )
             return
 
-        # Lock UI controls during inference
         self.btn_ai_enhance.setEnabled(False)
         self.btn_apply_scale.setEnabled(False)
         self.statusBar().showMessage("🤖 Running AI Super-Resolution (2x)... Please wait.")
 
-        # Start non-blocking QThread
-        self._ai_worker = SuperResWorker(item["baked"].copy())
+        self._ai_worker = SuperResWorker(ws.baked.copy())
         self._ai_worker.finished.connect(self._on_ai_enhance_finished)
         self._ai_worker.error.connect(self._on_ai_enhance_error)
         self._ai_worker.start()
 
     def _on_ai_enhance_finished(self, enhanced_img: Image.Image):
         """Callback when AI enhance completes successfully."""
-        if self.current_photo_idx < 0 or self.current_photo_idx >= len(self.workspace_photos):
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
 
-        # Push undo snapshot FIRST
-        self._push_undo_snapshot(item, "AI Super-Resolution (2x)")
+        self._sync_ui_to_workspace(ws)
+        ws.push_undo("AI Super-Resolution (2x)")
 
-        # Update working photo
-        item["baked"] = enhanced_img
-        item["orig"] = enhanced_img
-        item["roi"] = None
+        ws.baked = enhanced_img
+        ws.orig = enhanced_img
+        ws.crop.roi = None
+        ws.crop.quad = None
 
-        # Refresh thumbnail
-        thumb = enhanced_img.copy()
-        thumb.thumbnail((48, 48), Image.BILINEAR)
-        list_item = self.list_photos.item(self.current_photo_idx)
-        if list_item:
-            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+        self._refresh_thumbnail(self.current_photo_idx, enhanced_img)
 
-        # Re-render canvas
         self.canvas.set_pixmap(pil_to_pixmap(enhanced_img), keep_roi=False)
         self._trigger_render()
         self.canvas.fit_image()
         self._update_rescale_ui()
+        self._update_crop_button_state()
 
         if hasattr(self, "btn_undo"):
             self.btn_undo.setEnabled(True)
@@ -1010,19 +1052,39 @@ class PhotoStudioApp(QMainWindow):
     # -------------------------------------------------------------------------
 
     def _on_canvas_roi_changed(self, box: Tuple[int, int, int, int]):
-        if self.current_photo_idx >= 0:
-            self.workspace_photos[self.current_photo_idx]["roi"] = box
+        ws = self._current_workspace()
+        if ws is not None:
+            ws.crop.roi = box
+        self._update_crop_button_state()
         self._trigger_render()
 
+    def _on_canvas_quad_changed(self, points: List[Tuple[float, float]]):
+        ws = self._current_workspace()
+        if ws is not None and self.canvas.crop_mode == "perspective":
+            ws.crop.quad = list(points)
+
     def _on_reset_roi(self):
+        ws = self._current_workspace()
         if self.canvas.crop_mode == "perspective":
             self.canvas.reset_perspective_quad()
+            if ws is not None:
+                ws.crop.quad = self.canvas.get_perspective_quad()
             self.statusBar().showMessage("Reset 4 perspective pins to center.", 3000)
         else:
             self.canvas.set_roi_box(None)
-            if self.current_photo_idx >= 0:
-                self.workspace_photos[self.current_photo_idx]["roi"] = None
+            if ws is not None:
+                ws.crop.roi = None
+            self._update_crop_button_state()
             self._trigger_render()
+
+    def _update_crop_button_state(self):
+        """Updates Apply Crop button availability based on active photo, preset, and ROI box."""
+        if self._current_workspace() is None:
+            self.btn_apply_crop.setEnabled(False)
+        elif self.combo_presets.currentText() == "Freeform / Original":
+            self.btn_apply_crop.setEnabled(self.canvas.get_roi_box() is not None)
+        else:
+            self.btn_apply_crop.setEnabled(True)
 
     def _switch_to_crop_mode(self, auto_spawn_box: bool = True):
         """Activates standard Crop UI and canvas mode."""
@@ -1034,57 +1096,66 @@ class PhotoStudioApp(QMainWindow):
         preset = self.combo_presets.currentText()
         if preset == "Freeform / Original":
             self.canvas.set_aspect_ratio(None)
-            self.btn_apply_crop.setEnabled(self.canvas.get_roi_box() is not None)
         else:
             w_mm, h_mm = self._get_current_dimensions_in_mm()
             aspect = w_mm / h_mm if h_mm > 0 else 1.0
             self.canvas.set_aspect_ratio(aspect)
-            self.btn_apply_crop.setEnabled(True)
             if auto_spawn_box and not self.canvas.get_roi_box() and self.current_photo_idx >= 0:
                 self.canvas.spawn_centered_box(aspect_ratio=aspect)
+        self._update_crop_button_state()
 
     def _on_crop_mode_toggled(self, mode_id: int):
+        ws = self._current_workspace()
         if mode_id == 1:  # Straighten
             self.container_presets.setVisible(False)
             self.container_box_crop.setVisible(False)
             self.container_perspective.setVisible(True)
             self.canvas.set_crop_mode("perspective")
+            if ws is not None:
+                ws.crop.crop_mode = "perspective"
+                ws.crop.quad = self.canvas.get_perspective_quad()
             self.btn_apply_extract.setEnabled(self.current_photo_idx >= 0)
             self.statusBar().showMessage("Straighten mode: Drag the 4 corner pins (amber TOP = Width).", 4000)
         else:  # Crop
             self._switch_to_crop_mode(auto_spawn_box=True)
+            if ws is not None:
+                ws.crop.crop_mode = "standard"
             self.statusBar().showMessage("Crop mode active.", 3000)
 
     def _on_reset_perspective_pins(self):
         if self.canvas.crop_mode == "perspective":
             self.canvas.reset_perspective_quad()
+            ws = self._current_workspace()
+            if ws is not None:
+                ws.crop.quad = self.canvas.get_perspective_quad()
             self.statusBar().showMessage("Reset 4 perspective pins to center.", 3000)
 
-    def _finalize_geometry_edit(self, item: Dict[str, Any]):
+    def _finalize_geometry_edit(self, ws: PhotoWorkspace):
         """Refreshes workspace thumbnail, clears canvas overlays, re-renders, and updates rescale UI."""
-        thumb = item["baked"].copy()
-        thumb.thumbnail((40, 40), Image.BILINEAR)
-        list_item = self.list_photos.item(self.current_photo_idx)
-        if list_item:
-            list_item.setIcon(QIcon(pil_to_pixmap(thumb)))
+        self._refresh_thumbnail(self.current_photo_idx, ws.baked)
 
         self._block_signals = True
         try:
             self.canvas.set_perspective_quad(None)
             self.canvas.set_roi_box(None)
+            ws.crop.roi = None
+            ws.crop.quad = None
+            self._update_crop_button_state()
         finally:
             self._block_signals = False
 
         self._trigger_render()
         self.canvas.fit_image()
         self._update_rescale_ui()
+        if hasattr(self, "btn_undo"):
+            self.btn_undo.setEnabled(ws.has_undo())
 
     def _on_apply_extract(self):
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             QMessageBox.information(self, "No Photo", "Please add or select a photo first.")
             return
 
-        item = self.workspace_photos[self.current_photo_idx]
         quad = self.canvas.get_perspective_quad()
         if not quad or len(quad) != 4:
             QMessageBox.warning(self, "Invalid Selection", "Please position the 4 corner pins around the card or document.")
@@ -1104,28 +1175,31 @@ class PhotoStudioApp(QMainWindow):
         w_nat, h_nat = transforms.calculate_natural_quad_dimensions(quad)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            self._sync_ui_to_workspace(ws)
             desc = (
                 f"Extract & Fit ({target_px[0]}x{target_px[1]} px)"
                 if target_px else
                 f"Straighten & Extract ({w_nat}x{h_nat} px)"
             )
-            self._push_undo_snapshot(item, desc)
-            item["baked"] = engine.extract_perspective_quad(item["baked"], quad, target_size=target_px)
-            item["orig"] = engine.extract_perspective_quad(item["orig"], quad, target_size=target_px)
-            item["target_w_mm"] = w_mm if target_px else None
-            item["target_h_mm"] = h_mm if target_px else None
-            item["roi"] = None
+            ws.push_undo(desc)
+            ws.baked = engine.extract_perspective_quad(ws.baked, quad, target_size=target_px)
+            ws.orig = engine.extract_perspective_quad(ws.orig, quad, target_size=target_px)
+            ws.target_w_mm = w_mm if target_px else None
+            ws.target_h_mm = h_mm if target_px else None
+            ws.crop.roi = None
+            ws.crop.quad = None
 
-            self._finalize_geometry_edit(item)
+            self._finalize_geometry_edit(ws)
 
             # Switch back to Crop mode cleanly without spawning a box over the extracted image
             self.btn_mode_box_crop.setChecked(True)
             self._switch_to_crop_mode(auto_spawn_box=False)
+            ws.crop.crop_mode = "standard"
 
             if target_px:
-                msg = f"🪄 Extracted & fitted to {item['baked'].width} x {item['baked'].height} px ({w_mm:.1f} x {h_mm:.1f} mm)"
+                msg = f"🪄 Extracted & fitted to {ws.baked.width} x {ws.baked.height} px ({w_mm:.1f} x {h_mm:.1f} mm)"
             else:
-                msg = f"🪄 Extracted & straightened to {item['baked'].width} x {item['baked'].height} px (natural)"
+                msg = f"🪄 Extracted & straightened to {ws.baked.width} x {ws.baked.height} px (natural)"
             self.statusBar().showMessage(msg, 6000)
         except Exception as e:
             QMessageBox.critical(self, "Extraction Error", f"Failed to straighten and extract image:\n{e}")
@@ -1133,26 +1207,32 @@ class PhotoStudioApp(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def _on_rotate_90(self):
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        self._push_undo_snapshot(item, "Rotate 90°")
-        item["baked"] = item["baked"].rotate(-90, expand=True)
-        item["roi"] = None
-        self.canvas.set_pixmap(pil_to_pixmap(item["baked"]), keep_roi=False)
+        self._sync_ui_to_workspace(ws)
+        ws.push_undo("Rotate 90°")
+        ws.baked = ws.baked.rotate(-90, expand=True)
+        ws.crop.roi = None
+        ws.crop.quad = None
+        self._refresh_thumbnail(self.current_photo_idx, ws.baked)
+        self.canvas.set_pixmap(pil_to_pixmap(ws.baked), keep_roi=False)
+        self._update_crop_button_state()
         self._trigger_render()
         self.canvas.fit_image()
+        self._update_rescale_ui()
         if hasattr(self, "btn_undo"):
-            self.btn_undo.setEnabled(len(item.get("history", [])) > 0)
+            self.btn_undo.setEnabled(ws.has_undo())
 
     def _on_compare_pressed(self):
-        if self.current_photo_idx >= 0:
-            orig = self.workspace_photos[self.current_photo_idx]["orig"]
-            self.canvas.set_pixmap(pil_to_pixmap(orig), keep_roi=False)
+        ws = self._current_workspace()
+        if ws is not None:
+            self.canvas.set_pixmap(pil_to_pixmap(ws.orig), keep_roi=False)
 
     def _on_compare_released(self):
-        if self.current_photo_idx >= 0:
-            proc = self.workspace_photos[self.current_photo_idx].get("processed")
+        ws = self._current_workspace()
+        if ws is not None:
+            proc = ws.processed
             if proc:
                 self.canvas.set_pixmap(pil_to_pixmap(proc), keep_roi=True)
 
@@ -1200,8 +1280,38 @@ class PhotoStudioApp(QMainWindow):
         else:
             return val
 
+    def _configure_unit_spinboxes(self, unit: str) -> None:
+        """Applies precision, step, range, and suffix formatting to dimension spinboxes."""
+        if unit == "in":
+            self.spin_custom_w.setDecimals(2)
+            self.spin_custom_h.setDecimals(2)
+            self.spin_custom_w.setSingleStep(0.1)
+            self.spin_custom_h.setSingleStep(0.1)
+            self.spin_custom_w.setRange(0.2, 50.0)
+            self.spin_custom_h.setRange(0.2, 50.0)
+            self.spin_custom_w.setSuffix(" in")
+            self.spin_custom_h.setSuffix(" in")
+        elif unit == "px":
+            self.spin_custom_w.setDecimals(0)
+            self.spin_custom_h.setDecimals(0)
+            self.spin_custom_w.setSingleStep(10.0)
+            self.spin_custom_h.setSingleStep(10.0)
+            self.spin_custom_w.setRange(20.0, 10000.0)
+            self.spin_custom_h.setRange(20.0, 10000.0)
+            self.spin_custom_w.setSuffix(" px")
+            self.spin_custom_h.setSuffix(" px")
+        else:  # "mm"
+            self.spin_custom_w.setDecimals(1)
+            self.spin_custom_h.setDecimals(1)
+            self.spin_custom_w.setSingleStep(1.0)
+            self.spin_custom_h.setSingleStep(1.0)
+            self.spin_custom_w.setRange(5.0, 1000.0)
+            self.spin_custom_h.setRange(5.0, 1000.0)
+            self.spin_custom_w.setSuffix(" mm")
+            self.spin_custom_h.setSuffix(" mm")
+
     def _on_unit_changed(self, new_unit: str):
-        if new_unit == self._current_unit:
+        if self._block_signals or new_unit == self._current_unit:
             return
 
         new_w = self._convert_mm_to_unit(self._dim_w_mm, new_unit)
@@ -1209,37 +1319,13 @@ class PhotoStudioApp(QMainWindow):
 
         self._block_signals = True
         try:
-            if new_unit == "in":
-                self.spin_custom_w.setDecimals(2)
-                self.spin_custom_h.setDecimals(2)
-                self.spin_custom_w.setSingleStep(0.1)
-                self.spin_custom_h.setSingleStep(0.1)
-                self.spin_custom_w.setRange(0.2, 50.0)
-                self.spin_custom_h.setRange(0.2, 50.0)
-                self.spin_custom_w.setSuffix(" in")
-                self.spin_custom_h.setSuffix(" in")
-            elif new_unit == "px":
-                self.spin_custom_w.setDecimals(0)
-                self.spin_custom_h.setDecimals(0)
-                self.spin_custom_w.setSingleStep(10.0)
-                self.spin_custom_h.setSingleStep(10.0)
-                self.spin_custom_w.setRange(20.0, 10000.0)
-                self.spin_custom_h.setRange(20.0, 10000.0)
-                self.spin_custom_w.setSuffix(" px")
-                self.spin_custom_h.setSuffix(" px")
-            else:  # "mm"
-                self.spin_custom_w.setDecimals(1)
-                self.spin_custom_h.setDecimals(1)
-                self.spin_custom_w.setSingleStep(1.0)
-                self.spin_custom_h.setSingleStep(1.0)
-                self.spin_custom_w.setRange(5.0, 1000.0)
-                self.spin_custom_h.setRange(5.0, 1000.0)
-                self.spin_custom_w.setSuffix(" mm")
-                self.spin_custom_h.setSuffix(" mm")
-
+            self._configure_unit_spinboxes(new_unit)
             self.spin_custom_w.setValue(new_w)
             self.spin_custom_h.setValue(new_h)
             self._current_unit = new_unit
+            ws = self._current_workspace()
+            if ws is not None:
+                ws.crop.unit = new_unit
         finally:
             self._block_signals = False
 
@@ -1247,6 +1333,7 @@ class PhotoStudioApp(QMainWindow):
         if self._block_signals:
             return
 
+        ws = self._current_workspace()
         dims_mm = PRESET_MAP.get(text)
         if dims_mm is not None:
             w_mm, h_mm = dims_mm
@@ -1262,26 +1349,35 @@ class PhotoStudioApp(QMainWindow):
             finally:
                 self._block_signals = False
 
-            self.btn_apply_crop.setEnabled(True)
+            if ws is not None:
+                ws.crop.preset_name = text
+                ws.crop.dim_w_mm = w_mm
+                ws.crop.dim_h_mm = h_mm
+
             aspect = w_mm / h_mm if h_mm > 0 else 1.0
             self.canvas.set_aspect_ratio(aspect)
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=aspect)
+            self._update_crop_button_state()
             self.statusBar().showMessage(
                 f"Preset loaded: {text} ({w_mm:.1f} x {h_mm:.1f} mm). Frame with box, then click Apply Crop.",
                 5000
             )
         elif text == "Freeform / Original":
+            if ws is not None:
+                ws.crop.preset_name = text
             self.canvas.set_aspect_ratio(None)
-            self.btn_apply_crop.setEnabled(self.canvas.get_roi_box() is not None)
+            self._update_crop_button_state()
             self.statusBar().showMessage("Freeform: Drag any box freely or leave full image.", 3000)
         elif text == "Custom Size":
-            self.btn_apply_crop.setEnabled(True)
+            if ws is not None:
+                ws.crop.preset_name = text
             w_mm, h_mm = self._get_current_dimensions_in_mm()
             aspect = w_mm / h_mm if h_mm > 0 else 1.0
             self.canvas.set_aspect_ratio(aspect)
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=aspect)
+            self._update_crop_button_state()
 
     def _on_spinbox_dimension_changed(self):
         if self._block_signals:
@@ -1299,11 +1395,17 @@ class PhotoStudioApp(QMainWindow):
             finally:
                 self._block_signals = False
 
+        ws = self._current_workspace()
+        if ws is not None:
+            ws.crop.dim_w_mm = self._dim_w_mm
+            ws.crop.dim_h_mm = self._dim_h_mm
+            ws.crop.preset_name = "Custom Size"
+
         # Do not modify or spawn a rectangular crop box while in Straighten mode
         if self.canvas.crop_mode != "standard":
             return
 
-        self.btn_apply_crop.setEnabled(True)
+        self._update_crop_button_state()
 
         if self._dim_w_mm > 0 and self._dim_h_mm > 0:
             aspect = self._dim_w_mm / self._dim_h_mm
@@ -1317,21 +1419,26 @@ class PhotoStudioApp(QMainWindow):
 
         if mode_id == 0:  # Whole Image
             self.canvas.set_roi_box(None)
+            ws = self._current_workspace()
+            if ws is not None:
+                ws.crop.roi = None
+            self._update_crop_button_state()
             self._trigger_render()
         elif mode_id == 1:  # Patch ID
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=None)
+            self._update_crop_button_state()
             self._trigger_render()
 
     def _on_apply_crop(self):
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             QMessageBox.information(self, "No Photo", "Please add or select a photo first.")
             return
 
-        item = self.workspace_photos[self.current_photo_idx]
         roi_box = self.canvas.get_roi_box()
         if not roi_box:
-            w, h = item["baked"].size
+            w, h = ws.baked.size
             roi_box = (0, 0, w, h)
 
         preset = self.combo_presets.currentText()
@@ -1343,19 +1450,20 @@ class PhotoStudioApp(QMainWindow):
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            self._sync_ui_to_workspace(ws)
             desc = f"Crop to {w_mm:.1f}x{h_mm:.1f} mm" if target_px else "Crop to Selection"
-            self._push_undo_snapshot(item, desc)
-            item["baked"] = engine.crop_and_resize(item["baked"], roi_box, target_px)
-            item["orig"] = engine.crop_and_resize(item["orig"], roi_box, target_px)
-            item["target_w_mm"] = w_mm if target_px else None
-            item["target_h_mm"] = h_mm if target_px else None
-            item["roi"] = None
+            ws.push_undo(desc)
+            ws.baked = engine.crop_and_resize(ws.baked, roi_box, target_px)
+            ws.orig = engine.crop_and_resize(ws.orig, roi_box, target_px)
+            ws.target_w_mm = w_mm if target_px else None
+            ws.target_h_mm = h_mm if target_px else None
+            ws.crop.roi = None
 
-            self._finalize_geometry_edit(item)
+            self._finalize_geometry_edit(ws)
 
             dim_text = f" ({w_mm:.1f} x {h_mm:.1f} mm)" if target_px else ""
             self.statusBar().showMessage(
-                f"✂️ Cropped photo to {item['baked'].width} x {item['baked'].height} px{dim_text} with zero distortion",
+                f"✂️ Cropped photo to {ws.baked.width} x {ws.baked.height} px{dim_text} with zero distortion",
                 5000
             )
         except Exception as e:
@@ -1363,22 +1471,30 @@ class PhotoStudioApp(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def _on_ai_toggled(self, checked: bool):
+    def _sync_ai_controls_enabled(self) -> None:
+        """Enables or disables AI sub-controls based on AI toggle and backdrop choice."""
+        checked = self.chk_remove_bg.isChecked()
         self.combo_ai_model.setEnabled(checked)
         self.combo_backdrop.setEnabled(checked)
         self.slider_choke.setEnabled(checked)
         self.slider_feather.setEnabled(checked)
+        self.btn_pick_color.setEnabled(checked and "Custom" in self.combo_backdrop.currentText())
+
+    def _on_ai_toggled(self, checked: bool):
+        self._sync_ai_controls_enabled()
         self._trigger_render()
 
     def _on_backdrop_changed(self, text: str):
-        is_custom = "Custom" in text
-        self.btn_pick_color.setEnabled(is_custom)
+        self._sync_ai_controls_enabled()
         self._trigger_render()
 
     def _on_pick_custom_color(self):
         qcolor = QColorDialog.getColor(QColor(*self._custom_bg_color), self, "Select Backdrop Color")
         if qcolor.isValid():
             self._custom_bg_color = (qcolor.red(), qcolor.green(), qcolor.blue())
+            ws = self._current_workspace()
+            if ws is not None:
+                ws.retouch.custom_color = self._custom_bg_color
             self._trigger_render()
 
     def _on_choke_changed(self, val: int):
@@ -1405,56 +1521,65 @@ class PhotoStudioApp(QMainWindow):
             self.lbl_warmth.setText("0")
         finally:
             self._block_signals = False
+        ws = self._current_workspace()
+        if ws is not None:
+            ws.retouch.reset_lighting()
         self._trigger_render()
+
+    def _collect_retouch_state(self) -> RetouchState:
+        """Reads current AI, lighting, and box-scope controls into a RetouchState."""
+        return RetouchState(
+            remove_bg=self.chk_remove_bg.isChecked(),
+            ai_model="RMBG-1.4" if "RMBG" in self.combo_ai_model.currentText() else "MODNet",
+            backdrop=self.combo_backdrop.currentText(),
+            custom_color=self._custom_bg_color,
+            choke_px=self.slider_choke.value(),
+            feather_px=self.slider_feather.value() / 10.0,
+            brightness=self.slider_bright.value() / 100.0,
+            contrast=self.slider_contrast.value() / 100.0,
+            saturation=self.slider_sat.value() / 100.0,
+            sharpness=self.slider_sharp.value() / 100.0,
+            warmth=self.slider_warmth.value(),
+            edit_inside_box=(self.bg_roi_mode.checkedId() == 1),
+        )
 
     def _get_current_params(self) -> Dict[str, Any]:
         w_mm, h_mm = self._get_current_dimensions_in_mm()
-        return {
-            "remove_bg": self.chk_remove_bg.isChecked(),
-            "ai_model": "RMBG-1.4" if "RMBG" in self.combo_ai_model.currentText() else "MODNet",
-            "backdrop": self.combo_backdrop.currentText(),
-            "custom_color": self._custom_bg_color,
-            "choke_px": self.slider_choke.value(),
-            "feather_px": self.slider_feather.value() / 10.0,
-            "brightness": self.slider_bright.value() / 100.0,
-            "contrast": self.slider_contrast.value() / 100.0,
-            "saturation": self.slider_sat.value() / 100.0,
-            "sharpness": self.slider_sharp.value() / 100.0,
-            "warmth": self.slider_warmth.value(),
-            "preset_name": self.combo_presets.currentText(),
-            "custom_w_mm": w_mm,
-            "custom_h_mm": h_mm,
-        }
+        return self._collect_retouch_state().to_engine_params(
+            self.combo_presets.currentText(), w_mm, h_mm
+        )
 
     # -------------------------------------------------------------------------
     # Core Synchronous Rendering Pipeline
     # -------------------------------------------------------------------------
 
     def _trigger_render(self):
-        if self._block_signals or self.current_photo_idx < 0:
+        if self._block_signals:
+            return
+        ws = self._current_workspace()
+        if ws is None:
             return
 
-        item = self.workspace_photos[self.current_photo_idx]
-        base_img = item["baked"]
-        params = self._get_current_params()
+        retouch = self._collect_retouch_state()
+        ws.retouch = retouch
+        w_mm, h_mm = self._get_current_dimensions_in_mm()
+        params = retouch.to_engine_params(self.combo_presets.currentText(), w_mm, h_mm)
         roi_box = self.canvas.get_roi_box()
-
-        mode_id = self.bg_roi_mode.checkedId()
-        mode_str = "patch" if mode_id == 1 else "whole"
+        mode_str = "patch" if retouch.edit_inside_box else "whole"
 
         # Synchronous execution with wait cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             result = engine.process_image_pipeline(
-                full_img=base_img,
+                full_img=ws.baked,
                 roi_box=roi_box,
                 roi_mode=mode_str,
                 params=params,
                 seg_engine=engine.GLOBAL_SEGMENTATION_ENGINE
             )
-            item["processed"] = result
-            item["params"] = params
-            item["roi"] = roi_box
+            ws.processed = result
+            if self.canvas.crop_mode == "standard":
+                ws.crop.roi = roi_box
 
             # Update preview canvas
             self.canvas.set_pixmap(pil_to_pixmap(result), keep_roi=True)
@@ -1468,10 +1593,10 @@ class PhotoStudioApp(QMainWindow):
     # -------------------------------------------------------------------------
 
     def _on_save_single_photo(self):
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        proc = item.get("processed")
+        proc = ws.processed
         if not proc:
             return
 
@@ -1487,17 +1612,15 @@ class PhotoStudioApp(QMainWindow):
                 QMessageBox.critical(self, "Save Error", f"Failed saving image:\n{e}")
 
     def _on_send_to_print_queue(self):
-        if self.current_photo_idx < 0:
+        ws = self._current_workspace()
+        if ws is None:
             QMessageBox.information(self, "No Photo", "Please select a photo to send to print queue.")
             return
-        item = self.workspace_photos[self.current_photo_idx]
-        proc = item.get("processed")
-        if not proc:
-            proc = item["baked"]
+        proc = ws.processed if ws.processed else ws.baked
 
-        if item.get("target_w_mm") and item.get("target_h_mm"):
-            w_mm = item["target_w_mm"]
-            h_mm = item["target_h_mm"]
+        if ws.target_w_mm and ws.target_h_mm:
+            w_mm = ws.target_w_mm
+            h_mm = ws.target_h_mm
         else:
             preset = self.combo_presets.currentText()
             dims_mm = PRESET_MAP.get(preset)
@@ -1509,8 +1632,8 @@ class PhotoStudioApp(QMainWindow):
                     w_mm = round(proc.width / engine.PX_PER_MM, 1)
                     h_mm = round(proc.height / engine.PX_PER_MM, 1)
 
-        self.tab_printer.add_photo(proc, w_mm, h_mm, copies=4, label=item["name"])
-        self.statusBar().showMessage(f"Added to A4 Queue: {item['name']} ({w_mm:.1f} x {h_mm:.1f} mm)", 4000)
+        self.tab_printer.add_photo(proc, w_mm, h_mm, copies=4, label=ws.name)
+        self.statusBar().showMessage(f"Added to A4 Queue: {ws.name} ({w_mm:.1f} x {h_mm:.1f} mm)", 4000)
 
     # -------------------------------------------------------------------------
     # A4 Print Studio Handlers
