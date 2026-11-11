@@ -18,7 +18,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTabWidget, QGroupBox, QLabel, QSlider, QComboBox,
-    QCheckBox, QPushButton, QRadioButton, QButtonGroup, QSpinBox,
+    QCheckBox, QPushButton, QButtonGroup, QSpinBox,
     QDoubleSpinBox, QFileDialog, QColorDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
@@ -176,29 +176,6 @@ class PhotoStudioApp(QMainWindow):
         self.btn_remove_photo.clicked.connect(self._on_remove_photo)
         grp_workspace_layout.addWidget(self.btn_remove_photo)
         left_layout.addWidget(grp_workspace)
-
-        # Retouch Scope (Lighting & Local Patching)
-        grp_roi_mode = QGroupBox("🎯 Retouch Scope")
-        grp_roi_layout = QVBoxLayout(grp_roi_mode)
-        grp_roi_layout.setSpacing(3)
-        self.bg_roi_mode = QButtonGroup(self)
-
-        self.radio_mode_whole = QRadioButton("Whole Image")
-        self.radio_mode_patch = QRadioButton("Edit Inside Box (Patch)")
-        self.radio_mode_whole.setChecked(True)
-
-        self.bg_roi_mode.addButton(self.radio_mode_whole, 0)
-        self.bg_roi_mode.addButton(self.radio_mode_patch, 1)
-        self.bg_roi_mode.idClicked.connect(self._on_roi_mode_changed)
-
-        grp_roi_layout.addWidget(self.radio_mode_whole)
-        grp_roi_layout.addWidget(self.radio_mode_patch)
-
-        self.btn_bake_edit = QPushButton("✔️ Bake Edits to Base")
-        self.btn_bake_edit.setToolTip("Permanently commits current patch or lighting into image base")
-        self.btn_bake_edit.clicked.connect(self._on_bake_edit)
-        grp_roi_layout.addWidget(self.btn_bake_edit)
-        left_layout.addWidget(grp_roi_mode)
 
         # Crop & Straighten Group
         grp_preset = QGroupBox("📏 Crop && Straighten")
@@ -418,6 +395,7 @@ class PhotoStudioApp(QMainWindow):
         # AI Background Group
         grp_ai = QGroupBox("🤖 AI Background Removal")
         grp_ai_layout = QVBoxLayout(grp_ai)
+        grp_ai_layout.setContentsMargins(8, 6, 8, 8)
         grp_ai_layout.setSpacing(4)
 
         self.chk_remove_bg = QCheckBox("Enable AI Background Removal")
@@ -450,67 +428,68 @@ class PhotoStudioApp(QMainWindow):
         self.btn_pick_color.clicked.connect(self._on_pick_custom_color)
         grp_ai_layout.addWidget(self.btn_pick_color)
 
-        # Edge refinement - full sliders with reduced panel length
-        lbl_choke_row = QHBoxLayout()
-        lbl_choke_row.addWidget(QLabel("Edge Choke (Halo Cut):"))
-        lbl_choke_row.addStretch()
-        self.lbl_choke_val = QLabel("0 px")
-        lbl_choke_row.addWidget(self.lbl_choke_val)
-        grp_ai_layout.addLayout(lbl_choke_row)
-
-        self.slider_choke = NoWheelSlider(Qt.Horizontal)
-        self.slider_choke.setRange(0, 5)
-        self.slider_choke.setValue(0)
-        self.slider_choke.valueChanged.connect(self._on_choke_changed)
-        grp_ai_layout.addWidget(self.slider_choke)
-
-        lbl_feather_row = QHBoxLayout()
-        lbl_feather_row.addWidget(QLabel("Edge Feather (Softness):"))
-        lbl_feather_row.addStretch()
-        self.lbl_feather_val = QLabel("0.0 px")
-        lbl_feather_row.addWidget(self.lbl_feather_val)
-        grp_ai_layout.addLayout(lbl_feather_row)
-
-        self.slider_feather = NoWheelSlider(Qt.Horizontal)
-        self.slider_feather.setRange(0, 50)
-        self.slider_feather.setValue(0)
-        self.slider_feather.valueChanged.connect(self._on_feather_changed)
-        grp_ai_layout.addWidget(self.slider_feather)
+        # Edge refinement - uniform compact sliders
+        self.slider_choke, self.lbl_choke_val = self._create_compact_slider(
+            grp_ai_layout, "Edge Choke (Halo Cut):", 0, 5, 0, "0 px", self._on_choke_changed
+        )
+        self.slider_feather, self.lbl_feather_val = self._create_compact_slider(
+            grp_ai_layout, "Edge Feather (Softness):", 0, 50, 0, "0.0 px", self._on_feather_changed
+        )
 
         self._sync_ai_controls_enabled()
         right_layout.addWidget(grp_ai)
 
-        # Lighting & Color Adjustments Group - full sliders with reduced panel length
+        # Lighting & Color Adjustments Group
         grp_lighting = QGroupBox("☀️ Lighting && Color Grading")
         grp_lighting_layout = QVBoxLayout(grp_lighting)
-        grp_lighting_layout.setSpacing(3)
+        grp_lighting_layout.setContentsMargins(8, 6, 8, 8)
+        grp_lighting_layout.setSpacing(4)
 
-        # Helper to create slider rows (title + value header, slider beneath)
-        def create_slider(name: str, min_v: int, max_v: int, def_v: int, suffix: str = "%"):
-            header = QHBoxLayout()
-            lbl_title = QLabel(name)
-            lbl_val = QLabel(f"{def_v}{suffix}")
-            header.addWidget(lbl_title)
-            header.addStretch()
-            header.addWidget(lbl_val)
-            slider = NoWheelSlider(Qt.Horizontal)
-            slider.setRange(min_v, max_v)
-            slider.setValue(def_v)
-            slider.valueChanged.connect(lambda v: lbl_val.setText(f"{v}{suffix}"))
-            slider.valueChanged.connect(lambda _: self._trigger_render())
-            grp_lighting_layout.addLayout(header)
-            grp_lighting_layout.addWidget(slider)
+        def create_lighting_slider(name: str, min_v: int, max_v: int, def_v: int, suffix: str = "%"):
+            lbl_ref: List[QLabel] = []
+
+            def handle_change(val: int):
+                lbl_ref[0].setText(f"{val}{suffix}")
+                self._trigger_render()
+
+            slider, lbl_val = self._create_compact_slider(
+                grp_lighting_layout, name, min_v, max_v, def_v, f"{def_v}{suffix}", handle_change
+            )
+            lbl_ref.append(lbl_val)
             return slider, lbl_val
 
-        self.slider_bright, self.lbl_bright = create_slider("Brightness", 50, 150, 100)
-        self.slider_contrast, self.lbl_contrast = create_slider("Contrast", 50, 150, 100)
-        self.slider_sat, self.lbl_sat = create_slider("Saturation", 0, 200, 100)
-        self.slider_sharp, self.lbl_sharp = create_slider("Sharpness", 0, 300, 100)
-        self.slider_warmth, self.lbl_warmth = create_slider("Warmth", -30, 30, 0, "")
+        self.slider_bright, self.lbl_bright = create_lighting_slider("Brightness", 50, 150, 100)
+        self.slider_contrast, self.lbl_contrast = create_lighting_slider("Contrast", 50, 150, 100)
+        self.slider_sat, self.lbl_sat = create_lighting_slider("Saturation", 0, 200, 100)
+        self.slider_sharp, self.lbl_sharp = create_lighting_slider("Sharpness", 0, 300, 100)
+        self.slider_warmth, self.lbl_warmth = create_lighting_slider("Warmth", -30, 30, 0, "")
 
-        self.btn_reset_lighting = QPushButton("🔄 Reset Lighting")
+        self.chk_edit_inside_box = QCheckBox("Edit inside box")
+        self.chk_edit_inside_box.setChecked(False)
+        self.chk_edit_inside_box.setToolTip(
+            "When checked, applies lighting and AI background edits only inside the selection box "
+            "(automatically switches from Straighten to Crop mode if active)"
+        )
+        self.chk_edit_inside_box.toggled.connect(self._on_edit_inside_box_toggled)
+        grp_lighting_layout.addWidget(self.chk_edit_inside_box)
+
+        lighting_btn_row = QHBoxLayout()
+        lighting_btn_row.setSpacing(6)
+
+        self.btn_reset_lighting = QPushButton("🔄 Reset")
+        self.btn_reset_lighting.setToolTip("Reset lighting and color grading sliders to defaults")
         self.btn_reset_lighting.clicked.connect(self._on_reset_lighting)
-        grp_lighting_layout.addWidget(self.btn_reset_lighting)
+
+        self.btn_commit_retouch = QPushButton("✔️ Commit")
+        self.btn_commit_retouch.setObjectName("btn_commit_retouch")
+        self.btn_commit_retouch.setToolTip(
+            "Permanently commits current lighting and AI backdrop edits into base image and resets retouch controls"
+        )
+        self.btn_commit_retouch.clicked.connect(self._on_bake_edit)
+
+        lighting_btn_row.addWidget(self.btn_reset_lighting)
+        lighting_btn_row.addWidget(self.btn_commit_retouch)
+        grp_lighting_layout.addLayout(lighting_btn_row)
 
         right_layout.addWidget(grp_lighting)
 
@@ -583,6 +562,39 @@ class PhotoStudioApp(QMainWindow):
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([250, 815, 275])
 
+
+    def _create_compact_slider(
+        self,
+        parent_layout: QVBoxLayout,
+        name: str,
+        min_v: int,
+        max_v: int,
+        def_v: int,
+        default_text: str,
+        on_changed,
+    ) -> Tuple[NoWheelSlider, QLabel]:
+        """Creates a compact label + readout + horizontal slider block."""
+        block = QVBoxLayout()
+        block.setContentsMargins(0, 0, 0, 0)
+        block.setSpacing(1)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        lbl_title = QLabel(name)
+        lbl_val = QLabel(default_text)
+        header.addWidget(lbl_title)
+        header.addStretch()
+        header.addWidget(lbl_val)
+
+        slider = NoWheelSlider(Qt.Horizontal)
+        slider.setRange(min_v, max_v)
+        slider.setValue(def_v)
+        slider.valueChanged.connect(on_changed)
+
+        block.addLayout(header)
+        block.addWidget(slider)
+        parent_layout.addLayout(block)
+        return slider, lbl_val
 
     def _setup_shortcuts(self):
         # Global Ctrl+V clipboard paste shortcut
@@ -744,10 +756,7 @@ class PhotoStudioApp(QMainWindow):
         self.lbl_sharp.setText(f"{sharp_val}%")
         self.lbl_warmth.setText(f"{warmth_val}")
 
-        if retouch.edit_inside_box:
-            self.radio_mode_patch.setChecked(True)
-        else:
-            self.radio_mode_whole.setChecked(True)
+        self.chk_edit_inside_box.setChecked(retouch.edit_inside_box)
 
     def _load_crop_to_ui(self, crop: CropState, restore_pixmap: Optional[Image.Image] = None) -> None:
         """Applies a CropState to Crop/Straighten controls and canvas overlays."""
@@ -767,9 +776,12 @@ class PhotoStudioApp(QMainWindow):
         else:
             self.canvas.set_aspect_ratio(crop.dim_w_mm / crop.dim_h_mm)
 
-        self.canvas.crop_mode = crop.crop_mode
         if restore_pixmap is not None:
+            # Keep crop_mode temporarily standard so set_pixmap does not spawn a throwaway quad
+            self.canvas.crop_mode = "standard"
             self.canvas.set_pixmap(pil_to_pixmap(restore_pixmap), keep_roi=False)
+
+        self.canvas.crop_mode = crop.crop_mode
 
         if crop.crop_mode == "perspective":
             self.btn_mode_perspective.setChecked(True)
@@ -1052,6 +1064,8 @@ class PhotoStudioApp(QMainWindow):
     # -------------------------------------------------------------------------
 
     def _on_canvas_roi_changed(self, box: Tuple[int, int, int, int]):
+        if self._block_signals:
+            return
         ws = self._current_workspace()
         if ws is not None:
             ws.crop.roi = box
@@ -1059,6 +1073,8 @@ class PhotoStudioApp(QMainWindow):
         self._trigger_render()
 
     def _on_canvas_quad_changed(self, points: List[Tuple[float, float]]):
+        if self._block_signals:
+            return
         ws = self._current_workspace()
         if ws is not None and self.canvas.crop_mode == "perspective":
             ws.crop.quad = list(points)
@@ -1413,20 +1429,33 @@ class PhotoStudioApp(QMainWindow):
             if not self.canvas.get_roi_box():
                 self.canvas.spawn_centered_box(aspect_ratio=aspect)
 
-    def _on_roi_mode_changed(self, mode_id: int):
+    def _on_edit_inside_box_toggled(self, checked: bool):
         if self._block_signals:
             return
 
-        if mode_id == 0:  # Whole Image
+        if checked:
+            if self.canvas.crop_mode == "perspective":
+                self._block_signals = True
+                try:
+                    self.btn_mode_box_crop.setChecked(True)
+                    self._switch_to_crop_mode(auto_spawn_box=False)
+                finally:
+                    self._block_signals = False
+                ws = self._current_workspace()
+                if ws is not None:
+                    ws.crop.crop_mode = "standard"
+                self.statusBar().showMessage("Switched to Crop mode for boxed retouching.", 4000)
+
+            if not self.canvas.get_roi_box():
+                if self.canvas.spawn_centered_box(aspect_ratio=None) is not None:
+                    return
+            self._update_crop_button_state()
+            self._trigger_render()
+        else:
             self.canvas.set_roi_box(None)
             ws = self._current_workspace()
             if ws is not None:
                 ws.crop.roi = None
-            self._update_crop_button_state()
-            self._trigger_render()
-        elif mode_id == 1:  # Patch ID
-            if not self.canvas.get_roi_box():
-                self.canvas.spawn_centered_box(aspect_ratio=None)
             self._update_crop_button_state()
             self._trigger_render()
 
@@ -1540,7 +1569,7 @@ class PhotoStudioApp(QMainWindow):
             saturation=self.slider_sat.value() / 100.0,
             sharpness=self.slider_sharp.value() / 100.0,
             warmth=self.slider_warmth.value(),
-            edit_inside_box=(self.bg_roi_mode.checkedId() == 1),
+            edit_inside_box=self.chk_edit_inside_box.isChecked(),
         )
 
     def _get_current_params(self) -> Dict[str, Any]:
