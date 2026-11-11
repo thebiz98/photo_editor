@@ -9,7 +9,7 @@ import math
 
 from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import (
-    QPen, QBrush, QColor, QPainter, QPolygonF, QCursor
+    QPen, QBrush, QColor, QPainter, QPolygonF, QCursor, QFont
 )
 from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsPolygonItem
@@ -345,6 +345,30 @@ class ROIRectItem(QGraphicsRectItem):
         return True
 
 
+class _TopEdgeBadge(QGraphicsItem):
+    """Zoom-independent pill badge indicating the TOP (Width) edge of the perspective quad."""
+
+    def __init__(self, parent: QGraphicsItem):
+        super().__init__(parent)
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setZValue(20)
+        self._rect = QRectF(-18.0, -9.0, 36.0, 18.0)
+        self._font = QFont("Segoe UI", 8, QFont.Bold)
+
+    def boundingRect(self) -> QRectF:
+        return self._rect
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor(24, 24, 27), 1.0))
+        painter.setBrush(QBrush(QColor(245, 158, 11)))
+        painter.drawRoundedRect(self._rect, 5.0, 5.0)
+        painter.setPen(QColor(24, 24, 27))
+        painter.setFont(self._font)
+        painter.drawText(self._rect, Qt.AlignCenter, "TOP")
+
+
 class PerspectiveQuadItem(QGraphicsPolygonItem):
     """
     Interactive 4-Corner Quadrilateral with draggable pins for de-skewing & perspective extraction.
@@ -362,9 +386,13 @@ class PerspectiveQuadItem(QGraphicsPolygonItem):
         self.on_change_callback = on_change_callback
         self.setZValue(12)
 
-        # High-visibility cyan dashed line with semi-transparent fill
-        pen = QPen(QColor(0, 220, 255), 2, Qt.DashLine)
-        self.setPen(pen)
+        # Pens for side/bottom edges (dashed cyan) and highlighted TOP edge (amber)
+        self._edge_pen = QPen(QColor(0, 220, 255), 2.0, Qt.DashLine)
+        self._edge_pen.setCosmetic(True)
+        self._top_pen = QPen(QColor(245, 158, 11), 2.5, Qt.SolidLine)
+        self._top_pen.setCosmetic(True)
+
+        self.setPen(self._edge_pen)
         self.setBrush(QBrush(QColor(0, 180, 255, 35)))
 
         self.setFlags(
@@ -380,6 +408,8 @@ class PerspectiveQuadItem(QGraphicsPolygonItem):
             "br": PerspectivePin("br", self),
             "bl": PerspectivePin("bl", self),
         }
+
+        self._top_badge = _TopEdgeBadge(self)
 
         self._points: Dict[str, QPointF] = {
             "tl": quad_points[0],
@@ -405,6 +435,28 @@ class PerspectiveQuadItem(QGraphicsPolygonItem):
         self.setPolygon(poly)
         for k, h in self.handles.items():
             h.setPos(self._points[k])
+        mid_top = (self._points["tl"] + self._points["tr"]) * 0.5
+        self._top_badge.setPos(mid_top)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        # 1. Fill interior polygon
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self.brush())
+        painter.drawPolygon(self.polygon())
+
+        # 2. Draw side and bottom edges in dashed cyan
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(self._edge_pen)
+        tl, tr = self._points["tl"], self._points["tr"]
+        br, bl = self._points["br"], self._points["bl"]
+        painter.drawLine(tr, br)
+        painter.drawLine(br, bl)
+        painter.drawLine(bl, tl)
+
+        # 3. Highlight TOP edge (TL -> TR) in solid amber so Width orientation is clear
+        painter.setPen(self._top_pen)
+        painter.drawLine(tl, tr)
 
     def get_quad_points(self) -> List[Tuple[float, float]]:
         """Returns quad coordinates as a list of 4 (x, y) tuples: [TL, TR, BR, BL]."""
