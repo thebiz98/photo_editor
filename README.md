@@ -21,7 +21,7 @@ Preparing official passport, visa, and ID photos or fixing scanned document phot
 6. **A4 2D Shelf Bin-Packing Engine**: Automatically tiles arbitrary photo dimensions and copy counts onto standard A4 paper (`2480 x 3508` @ 300 DPI) with customizable margins, inter-photo gaps, and scissor cut lines.
 7. **True 1:1 Hardware Printing**: Directly drives physical printers via `QPrinter` with a 0 mm margin layout, preventing Windows printer drivers from auto-shrinking 35×45 mm photos.
 8. **Deterministic Rescaling & AI Super-Resolution**: Built-in CPU Lanczos downscaling/upscaling (10% to 400%) with smart unsharp edge sharpening and 4096 px memory ceilings, plus 100% offline neural 2x super-resolution (`RealESRGAN-x2plus`) via ONNX Runtime to restore low-res images before printing. Zero UI freezes via background `QThread` workers.
-9. **4-Point Perspective Straightening & ID Extractor**: Cleanly digitizes and straightens slanted, perspective-distorted photos of ID cards, driver's licenses, and documents. Users drag 4 circular corner pins (`TL`, `TR`, `BR`, `BL`) onto the card corners and extract a flat, rectified photo at native unconstrained pixel resolution with zero artificial distortion and full Undo/Redo integration.
+9. **4-Point Perspective Straightening & ID Extractor**: Cleanly digitizes and straightens slanted, perspective-distorted photos of ID cards, driver's licenses, and documents. Users drag 4 circular corner pins (with an amber **`TOP`** edge hint for Width orientation) onto the card corners and extract either at native unconstrained pixel resolution or fitted directly to specified physical (`mm`/`in` @ 300 DPI) or pixel (`px`) dimensions via **Apply Size**, with full Undo/Redo integration.
 
 ---
 
@@ -183,17 +183,17 @@ If you want an instant zero-overhead launcher without re-bundling files, double-
 
 The **Crop & Straighten** panel provides two dedicated workflows in a single unified interface:
 
-### 1. `✂️ Standard Crop` (Physical Sizing)
+### 1. `✂️ Crop` (Physical Sizing)
 - **Use Case:** Framing portraits or cropping photos to exact physical passport, visa, or ID dimensions.
-- **Features:** 8 interactive resize handles, aspect ratio locking, physical print presets (Passport $35 \times 45\text{ mm}$, Visa $2 \times 2\text{ in}$, ID Card $85.6 \times 54\text{ mm}$), custom mm/in/px spinboxes, and keyboard arrow nudging (hold `Shift` for $10\text{ px}$ nudge).
+- **Features:** 8 interactive resize handles, aspect ratio locking, physical print presets (Passport $35 \times 45\text{ mm}$, Visa $2 \times 2\text{ in}$, ID Card $85.6 \times 54\text{ mm}$), shared `mm`/`in`/`px` dimensions, and keyboard arrow nudging (hold `Shift` for $10\text{ px}$ nudge).
 
-### 2. `📐 Straighten (De-skew)` (4-Corner ID & Document Extractor)
+### 2. `📐 Straighten` (4-Corner ID & Document Extractor)
 - **Use Case:** Digitizing skewed or slanted snapshots of ID cards, licenses, certificates, and business cards taken at an angle.
 - **Workflow:**
-  1. Toggle to `📐 Straighten (De-skew)` in the left panel.
-  2. Drag the 4 circular corner pins (`TL`, `TR`, `BR`, `BL`) directly onto the 4 corners of the ID card on the canvas.
-  3. The live readout displays the extracted natural resolution in real time (e.g. `📐 Extracted: ~856 × 540 px`).
-  4. Click `🪄 Extract & Straighten` to compute the projective homography matrix and rectify the card into a flat, straight rectangular photo.
+  1. Toggle to `📐 Straighten` in the **Crop & Straighten** panel.
+  2. Drag the 4 circular corner pins onto the 4 corners of the card on the canvas. Align the highlighted amber **`TOP`** edge (`TL → TR`) with the top (`Width`) edge of the card (click `🔄 Reset` anytime to re-center pins).
+  3. *(Optional)* To reverse 3D foreshortening and fit the card directly into exact dimensions (such as $85.6 \times 54.0\text{ mm}$), enter **Width** and **Height** (in `mm`, `in`, or `px`) and check **Apply Size**. Leave **Apply Size** unchecked to extract at unconstrained natural pixel resolution.
+  4. Click `🪄 Extract` to compute the projective homography matrix and rectify the card into a flat, straight rectangular photo.
   5. The extracted photo replaces the active image with full `Ctrl+Z` Undo and Revert support.
 
 ---
