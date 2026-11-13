@@ -12,10 +12,11 @@ Preparing official passport, visa, and ID photos or fixing scanned document phot
 
 1. **Zero Web Stack / Zero Server**: Pure native Qt6 GUI (`PySide6-Essentials`) — no Gradio, no FastAPI, no Uvicorn, and no browser chrome.
 2. **100% Offline Runtime & Bundled Weights**: Pre-bundled local ONNX weights (`RMBG-1.4` and `MODNet`). Runs completely disconnected with zero network calls.
-3. **Dual-Mode Interactive ROI Selection**:
-   - **Whole Image**: Apply lighting, background cutout, and preset physical scaling to the full picture.
-   - **Edit Inside Box Only (Patch ID / Document)**: Select a sub-region (like the portrait on a scanned ID or passport application), fix its lighting and backdrop, and bake it seamlessly back into the document without altering surrounding text or seals.
+3. **Streamlined Retouch Scope & Isolated Per-Photo Workspaces**:
+   - **Whole Image (Default)**: Lighting, color grading, and AI background removal apply to the full photo by default.
+   - **Edit inside box**: Toggle `Edit inside box` inside the right-pane **Lighting & Color Grading** panel to confine lighting and AI backdrop changes to a sub-region (like a portrait on a scanned ID), then click `✔️ Commit` to bake edits permanently and reset all retouch sliders cleanly.
    - **Crop to Box (Extract Standalone Photo)**: Extract the sub-region and scale directly to standard physical dimensions at 300 DPI.
+   - **Per-Photo Workspace Isolation**: Each loaded photo maintains its own independent sliders, AI backdrop settings, crop presets/units, and perspective pins when switching between images.
 4. **Morphological Edge Refinement**: Replaces manual brushwork with instant morphological erosion (`Edge Choke` 0–5 px) to eliminate background halos around hair and shoulders, plus Gaussian blur (`Edge Feather` 0.0–5.0 px) for smooth edge transitions.
 5. **In-Memory Alpha Caching**: Raw alpha mattes are cached in memory so moving lighting sliders, color grading, backdrop colors, or edge refinement sliders never triggers redundant ONNX inference.
 6. **A4 2D Shelf Bin-Packing Engine**: Automatically tiles arbitrary photo dimensions and copy counts onto standard A4 paper (`2480 x 3508` @ 300 DPI) with customizable margins, inter-photo gaps, and scissor cut lines.
@@ -105,6 +106,7 @@ photo_editor/
 ├── canvas_items.py             # Reusable interactive handles, ROI rect box, & 4-corner perspective quad
 ├── canvas.py                   # Viewport, zoom, pan, overlay coordination, keyboard nudging
 ├── styles.py                   # Centralized dark theme QSS stylesheet
+├── workspace.py                # Isolated per-photo workspace state & undo history model
 ├── printer.py                  # A4 2D shelf bin-packing & 1:1 QPrinter hardware engine
 ├── print_studio.py             # Tab 2: A4 Print Studio controller
 ├── main.py                     # Native PySide6 GUI desktop application

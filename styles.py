@@ -8,13 +8,13 @@ QMainWindow, QWidget {
     background-color: #18181b;
     color: #f4f4f5;
     font-family: 'Segoe UI', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
-    font-size: 13px;
+    font-size: 11px;
 }
 QGroupBox {
     border: 1px solid #3f3f46;
     border-radius: 6px;
-    margin-top: 10px;
-    padding-top: 12px;
+    margin-top: 8px;
+    padding-top: 10px;
     font-weight: bold;
     color: #e4e4e7;
 }
@@ -27,14 +27,14 @@ QGroupBox::title {
 /* Radio Buttons & High-Contrast Selected Indicator */
 QRadioButton {
     color: #f4f4f5;
-    spacing: 8px;
-    font-size: 13px;
+    spacing: 6px;
+    font-size: 11px;
     background-color: transparent;
 }
 QRadioButton::indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 9px;
+    width: 14px;
+    height: 14px;
+    border-radius: 8px;
     border: 2px solid #52525b;
     background-color: #27272a;
 }
@@ -59,14 +59,14 @@ QRadioButton::indicator:disabled {
 /* Checkboxes & Checkmark Indicator */
 QCheckBox {
     color: #f4f4f5;
-    spacing: 8px;
-    font-size: 13px;
+    spacing: 6px;
+    font-size: 11px;
     background-color: transparent;
 }
 QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 4px;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
     border: 2px solid #52525b;
     background-color: #27272a;
 }
@@ -86,9 +86,9 @@ QPushButton {
     background-color: #27272a;
     border: 1px solid #3f3f46;
     border-radius: 4px;
-    padding: 5px 10px;
+    padding: 4px 8px;
     color: #f4f4f5;
-    min-height: 24px;
+    min-height: 22px;
 }
 QPushButton:hover {
     background-color: #3f3f46;
@@ -108,14 +108,34 @@ QPushButton#btn_send_queue {
     font-weight: bold;
     border: 1px solid #38bdf8;
     border-radius: 4px;
-    padding: 5px 10px;
-    min-height: 24px;
+    padding: 4px 8px;
+    min-height: 22px;
 }
 QPushButton#btn_send_queue:hover {
     background-color: #0369a1;
 }
 QPushButton#btn_send_queue:pressed {
     background-color: #075985;
+}
+QPushButton#btn_commit_retouch {
+    background-color: #16a34a;
+    color: #ffffff;
+    font-weight: bold;
+    border: 1px solid #22c55e;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 22px;
+}
+QPushButton#btn_commit_retouch:hover {
+    background-color: #15803d;
+}
+QPushButton#btn_commit_retouch:pressed {
+    background-color: #166534;
+}
+QPushButton#btn_commit_retouch:disabled {
+    background-color: #1f1f23;
+    color: #71717a;
+    border-color: #27272a;
 }
 QPushButton#btn_apply_crop {
     background-color: #d97706;
@@ -239,9 +259,9 @@ QComboBox, QSpinBox, QDoubleSpinBox {
     background-color: #27272a;
     border: 1px solid #3f3f46;
     border-radius: 4px;
-    padding: 3px 6px;
+    padding: 2px 6px;
     color: #f4f4f5;
-    min-height: 22px;
+    min-height: 20px;
 }
 QComboBox::drop-down {
     border: none;
@@ -256,21 +276,26 @@ QListWidget::item:selected, QTableWidget::item:selected {
     background-color: #0284c7;
     color: white;
 }
+QSlider {
+    min-height: 16px;
+    max-height: 18px;
+}
 QSlider::groove:horizontal {
-    height: 6px;
+    height: 4px;
     background: #3f3f46;
-    border-radius: 3px;
+    border-radius: 2px;
 }
 QSlider::sub-page:horizontal {
     background: #0284c7;
-    border-radius: 3px;
+    border-radius: 2px;
 }
 QSlider::handle:horizontal {
     background: #38bdf8;
-    width: 14px;
+    width: 12px;
+    height: 12px;
     margin-top: -4px;
     margin-bottom: -4px;
-    border-radius: 7px;
+    border-radius: 6px;
 }
 QTabWidget::pane {
     border: 1px solid #27272a;
