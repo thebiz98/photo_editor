@@ -23,6 +23,7 @@ from canvas_items import (
     BaseHandle, ROIHandle, PerspectivePin,
     ROIRectItem, PerspectiveQuadItem
 )
+from ui.theme import STUDIO_DARK_THEME, CanvasOverlayTokens
 
 
 def pil_to_pixmap(pil_img: Image.Image) -> QPixmap:
@@ -40,8 +41,15 @@ class InteractiveCanvas(QGraphicsView):
     quadChanged = Signal(list)
     filesDropped = Signal(list)
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        overlay_tokens: Optional[CanvasOverlayTokens] = None,
+        badge_font_family: str = STUDIO_DARK_THEME.typography.font_family_raw,
+    ):
         super().__init__(parent)
+        self._overlay_tokens = overlay_tokens or STUDIO_DARK_THEME.canvas
+        self._badge_font_family = badge_font_family
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
@@ -50,7 +58,7 @@ class InteractiveCanvas(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setBackgroundBrush(QBrush(QColor(24, 24, 27)))
+        self.setBackgroundBrush(QBrush(QColor(*self._overlay_tokens.viewport_bg)))
         self.setFrameShape(QFrame.NoFrame)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -132,7 +140,13 @@ class InteractiveCanvas(QGraphicsView):
         bounds = QRectF(self.pixmap_item.pixmap().rect())
         r = QRectF(x1, y1, x2 - x1, y2 - y1).intersected(bounds)
         if r.width() >= 10 and r.height() >= 10:
-            self.roi_item = ROIRectItem(r, bounds, self._on_roi_modified, aspect_ratio=self.aspect_ratio)
+            self.roi_item = ROIRectItem(
+                r,
+                bounds,
+                self._on_roi_modified,
+                aspect_ratio=self.aspect_ratio,
+                tokens=self._overlay_tokens,
+            )
             self.roi_item.setVisible(self.crop_mode == "standard")
             self.scene.addItem(self.roi_item)
 
@@ -215,7 +229,13 @@ class InteractiveCanvas(QGraphicsView):
 
         bounds = QRectF(self.pixmap_item.pixmap().rect())
         q_points = [QPointF(x, y) for (x, y) in points]
-        self.quad_item = PerspectiveQuadItem(q_points, bounds, self._on_quad_modified)
+        self.quad_item = PerspectiveQuadItem(
+            q_points,
+            bounds,
+            self._on_quad_modified,
+            tokens=self._overlay_tokens,
+            badge_font_family=self._badge_font_family,
+        )
         self.quad_item.setVisible(self.crop_mode == "perspective")
         self.scene.addItem(self.quad_item)
 
@@ -301,8 +321,10 @@ class InteractiveCanvas(QGraphicsView):
                 if self._rubber_rect_item:
                     self.scene.removeItem(self._rubber_rect_item)
                 self._rubber_rect_item = QGraphicsRectItem(QRectF(scene_pt, scene_pt))
-                self._rubber_rect_item.setPen(QPen(QColor(0, 220, 255), 2, Qt.DashLine))
-                self._rubber_rect_item.setBrush(QBrush(QColor(0, 180, 255, 30)))
+                self._rubber_rect_item.setPen(
+                    QPen(QColor(*self._overlay_tokens.roi_stroke), self._overlay_tokens.roi_stroke_width, Qt.DashLine)
+                )
+                self._rubber_rect_item.setBrush(QBrush(QColor(*self._overlay_tokens.roi_fill)))
                 self.scene.addItem(self._rubber_rect_item)
                 event.accept()
                 return

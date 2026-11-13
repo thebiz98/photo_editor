@@ -105,11 +105,16 @@ photo_editor/
 ├── rescaler.py                 # CPU Lanczos scaling, smart unsharp, & Real-ESRGAN 2x engine
 ├── canvas_items.py             # Reusable interactive handles, ROI rect box, & 4-corner perspective quad
 ├── canvas.py                   # Viewport, zoom, pan, overlay coordination, keyboard nudging
-├── styles.py                   # Centralized dark theme QSS stylesheet
+├── ui/                         # Modular PySide6 UI system
+│   ├── theme/                  # Design tokens, section configs, dark theme, & dynamic QSS builder
+│   ├── primitives/             # Reusable wheel-safe inputs, variant buttons, labels, & sliders
+│   └── panels/                 # Extracted Photo Studio panels (workspace, crop, toolbar, AI, lighting, rescale)
+├── styles.py                   # Compatibility facade re-exporting compiled dark theme QSS
 ├── workspace.py                # Isolated per-photo workspace state & undo history model
 ├── printer.py                  # A4 2D shelf bin-packing & 1:1 QPrinter hardware engine
 ├── print_studio.py             # Tab 2: A4 Print Studio controller
 ├── main.py                     # Native PySide6 GUI desktop application
+├── tests/                      # Headless PySide6 UI modularity & workflow tests
 ├── PhotoStudio.bat             # Zero-console Windows launcher (pythonw.exe)
 ├── PLAN.md                     # Technical architecture & specification document
 ├── README.md                   # This documentation

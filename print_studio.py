@@ -9,22 +9,34 @@ from PIL import Image
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame,
-    QGroupBox, QLabel, QPushButton, QCheckBox, QDoubleSpinBox,
-    QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QFileDialog, QMessageBox, QLayout
+    QLabel, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QAbstractItemView, QFileDialog, QMessageBox, QLayout,
 )
 
 from canvas import InteractiveCanvas, pil_to_pixmap
 import printer
+from ui.primitives import (
+    AppButton,
+    AppLabel,
+    FormRow,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
+    SectionBox,
+)
+from ui.theme import STUDIO_DARK_THEME, ThemeConfig, set_widget_props
 
 
 class PrintStudioTab(QWidget):
-    """
-    Self-contained A4 Print Studio tab component.
-    """
+    """Self-contained A4 Print Studio tab component."""
 
-    def __init__(self, parent=None, status_bar_callback=None):
+    def __init__(
+        self,
+        parent=None,
+        status_bar_callback=None,
+        theme: ThemeConfig = STUDIO_DARK_THEME,
+    ):
         super().__init__(parent)
+        self.theme = theme
         self.status_bar_callback = status_bar_callback
         self.print_queue: List[Dict[str, Any]] = []
         self._cached_a4_sheet: Optional[Image.Image] = None
@@ -36,9 +48,14 @@ class PrintStudioTab(QWidget):
             self.status_bar_callback(message, timeout)
 
     def _setup_ui(self):
+        lt = self.theme.layout
+        sp = self.theme.spacing
+        print_zone = self.theme.get_zone_config("print-sidebar")
+        preview_zone = self.theme.get_zone_config("print-preview")
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setContentsMargins(sp.md, sp.md, sp.md, sp.md)
+        layout.setSpacing(sp.md)
 
         # Left: Queue & Layout settings in scroll area
         left_scroll = QScrollArea()
@@ -46,20 +63,26 @@ class PrintStudioTab(QWidget):
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        left_scroll.setFixedWidth(380)
+        left_scroll.setMinimumWidth(lt.print_sidebar_range[0])
+        left_scroll.setMaximumWidth(lt.print_sidebar_range[1])
         left_scroll.verticalScrollBar().setSingleStep(25)
 
         left_panel = QWidget()
-        left_panel.setMinimumHeight(600)
+        set_widget_props(left_panel, repolish=False, zone="print-sidebar")
+        left_panel.setMinimumHeight(lt.print_sidebar_min_h)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setSizeConstraint(QLayout.SetMinimumSize)
-        left_layout.setContentsMargins(4, 4, 14, 8)
-        left_layout.setSpacing(6)
+        left_layout.setContentsMargins(*print_zone.margins)
+        left_layout.setSpacing(print_zone.spacing)
 
         # 1. Queue Table Group
-        grp_queue = QGroupBox("📋 A4 Print Queue")
-        grp_queue_layout = QVBoxLayout(grp_queue)
-        grp_queue_layout.setSpacing(5)
+        grp_queue = SectionBox(
+            "📋 A4 Print Queue",
+            section_id="print_queue",
+            zone_id="print-sidebar",
+            theme=self.theme,
+            parent=left_panel,
+        )
 
         self.tbl_queue = QTableWidget(0, 4)
         self.tbl_queue.setHorizontalHeaderLabels(["Preview", "Size (mm)", "Copies", "Action"])
@@ -68,70 +91,98 @@ class PrintStudioTab(QWidget):
         self.tbl_queue.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tbl_queue.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.tbl_queue.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.tbl_queue.setMinimumHeight(110)
-        self.tbl_queue.setMaximumHeight(160)
-        grp_queue_layout.addWidget(self.tbl_queue)
+        self.tbl_queue.setMinimumHeight(lt.print_table_h[0])
+        self.tbl_queue.setMaximumHeight(lt.print_table_h[1])
+        grp_queue.add_widget(self.tbl_queue)
 
-        self.btn_clear_queue = QPushButton("🗑️ Clear Entire Queue")
+        self.btn_clear_queue = AppButton(
+            "🗑️ Clear Entire Queue",
+            variant="default",
+            ui_size="md",
+            parent=grp_queue,
+        )
         self.btn_clear_queue.clicked.connect(self.clear_queue)
-        grp_queue_layout.addWidget(self.btn_clear_queue)
+        grp_queue.add_widget(self.btn_clear_queue)
         left_layout.addWidget(grp_queue)
 
         # 2. Page Layout Settings
-        grp_layout_settings = QGroupBox("📐 A4 Page Layout Settings")
-        grp_settings_layout = QVBoxLayout(grp_layout_settings)
-        grp_settings_layout.setSpacing(4)
+        grp_layout_settings = SectionBox(
+            "📐 A4 Page Layout Settings",
+            section_id="print_layout",
+            zone_id="print-sidebar",
+            theme=self.theme,
+            parent=left_panel,
+        )
 
-        margin_row = QHBoxLayout()
-        margin_row.addWidget(QLabel("Page Margin (mm):"))
-        self.spin_margin = QDoubleSpinBox()
+        self.spin_margin = NoWheelDoubleSpinBox()
         self.spin_margin.setRange(0.0, 30.0)
         self.spin_margin.setValue(10.0)
         self.spin_margin.setSingleStep(1.0)
         self.spin_margin.setSuffix(" mm")
         self.spin_margin.valueChanged.connect(self.refresh_preview)
-        margin_row.addWidget(self.spin_margin)
-        grp_settings_layout.addLayout(margin_row)
+        grp_layout_settings.add_widget(
+            FormRow("Page Margin (mm):", self.spin_margin, spacing=sp.md, parent=grp_layout_settings)
+        )
 
-        gap_row = QHBoxLayout()
-        gap_row.addWidget(QLabel("Gap Between Photos (mm):"))
-        self.spin_gap = QDoubleSpinBox()
+        self.spin_gap = NoWheelDoubleSpinBox()
         self.spin_gap.setRange(0.0, 20.0)
         self.spin_gap.setValue(2.0)
         self.spin_gap.setSingleStep(0.5)
         self.spin_gap.setSuffix(" mm")
         self.spin_gap.valueChanged.connect(self.refresh_preview)
-        gap_row.addWidget(self.spin_gap)
-        grp_settings_layout.addLayout(gap_row)
+        grp_layout_settings.add_widget(
+            FormRow("Gap Between Photos (mm):", self.spin_gap, spacing=sp.md, parent=grp_layout_settings)
+        )
 
         self.chk_cut_lines = QCheckBox("Draw Light-Grey Scissor Cut Lines")
         self.chk_cut_lines.setChecked(True)
         self.chk_cut_lines.toggled.connect(self.refresh_preview)
-        grp_settings_layout.addWidget(self.chk_cut_lines)
+        grp_layout_settings.add_widget(self.chk_cut_lines)
 
-        self.lbl_queue_status = QLabel("Placed: 0 photos | Overflow: 0 photos")
-        self.lbl_queue_status.setStyleSheet("font-weight: bold; color: #38bdf8;")
-        grp_settings_layout.addWidget(self.lbl_queue_status)
-
+        self.lbl_queue_status = AppLabel(
+            "Placed: 0 photos | Overflow: 0 photos",
+            role="body",
+            tone="accent-bold",
+            parent=grp_layout_settings,
+        )
+        grp_layout_settings.add_widget(self.lbl_queue_status)
         left_layout.addWidget(grp_layout_settings)
 
         # 3. Hardware Printing & Export
-        grp_output = QGroupBox("🖨️ Hardware Printing && Export")
-        grp_output_layout = QVBoxLayout(grp_output)
-        grp_output_layout.setSpacing(5)
+        grp_output = SectionBox(
+            "🖨️ Hardware Printing && Export",
+            section_id="print_output",
+            zone_id="print-sidebar",
+            theme=self.theme,
+            parent=left_panel,
+        )
 
-        self.btn_print_hw = QPushButton("🖨️ Print Directly (1:1 Hardware A4)")
-        self.btn_print_hw.setObjectName("btn_print_hw")
+        self.btn_print_hw = AppButton(
+            "🖨️ Print Directly (1:1 Hardware A4)",
+            variant="success",
+            ui_size="xl",
+            parent=grp_output,
+        )
         self.btn_print_hw.clicked.connect(self._on_print_hardware)
-        grp_output_layout.addWidget(self.btn_print_hw)
+        grp_output.add_widget(self.btn_print_hw)
 
-        self.btn_export_png = QPushButton("💾 Save 300-DPI A4 PNG")
+        self.btn_export_png = AppButton(
+            "💾 Save 300-DPI A4 PNG",
+            variant="default",
+            ui_size="md",
+            parent=grp_output,
+        )
         self.btn_export_png.clicked.connect(self._on_export_a4_png)
-        grp_output_layout.addWidget(self.btn_export_png)
+        grp_output.add_widget(self.btn_export_png)
 
-        self.btn_export_pdf = QPushButton("📄 Save 300-DPI A4 PDF")
+        self.btn_export_pdf = AppButton(
+            "📄 Save 300-DPI A4 PDF",
+            variant="default",
+            ui_size="md",
+            parent=grp_output,
+        )
         self.btn_export_pdf.clicked.connect(self._on_export_a4_pdf)
-        grp_output_layout.addWidget(self.btn_export_pdf)
+        grp_output.add_widget(self.btn_export_pdf)
 
         left_layout.addWidget(grp_output)
         left_layout.addSpacing(20)
@@ -142,10 +193,14 @@ class PrintStudioTab(QWidget):
 
         # Right: Live A4 Preview Viewport
         right_panel = QWidget()
+        set_widget_props(right_panel, repolish=False, zone="print-preview")
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setContentsMargins(*preview_zone.margins)
 
-        self.a4_canvas = InteractiveCanvas()
+        self.a4_canvas = InteractiveCanvas(
+            overlay_tokens=self.theme.canvas,
+            badge_font_family=self.theme.typography.font_family_raw,
+        )
         right_layout.addWidget(self.a4_canvas)
         layout.addWidget(right_panel, stretch=1)
 
@@ -194,13 +249,14 @@ class PrintStudioTab(QWidget):
     # -------------------------------------------------------------------------
 
     def _refresh_queue_table(self):
+        thumb_px = self.theme.layout.print_thumb_px
         self.tbl_queue.setRowCount(0)
         for i, item in enumerate(self.print_queue):
             self.tbl_queue.insertRow(i)
 
             # Thumbnail
             thumb = item["image"].copy()
-            thumb.thumbnail((40, 40), Image.BILINEAR)
+            thumb.thumbnail((thumb_px, thumb_px), Image.BILINEAR)
             lbl_icon = QLabel()
             lbl_icon.setPixmap(pil_to_pixmap(thumb))
             lbl_icon.setAlignment(Qt.AlignCenter)
@@ -213,15 +269,14 @@ class PrintStudioTab(QWidget):
             self.tbl_queue.setItem(i, 1, dim_item)
 
             # Copies SpinBox
-            spin = QSpinBox()
+            spin = NoWheelSpinBox()
             spin.setRange(1, 50)
             spin.setValue(item.get("copies", 1))
             spin.valueChanged.connect(lambda val, idx=i: self._on_queue_copies_changed(idx, val))
             self.tbl_queue.setCellWidget(i, 2, spin)
 
             # Remove Button
-            btn_del = QPushButton("❌")
-            btn_del.setFixedWidth(30)
+            btn_del = AppButton("❌", variant="icon", ui_size="sm")
             btn_del.clicked.connect(lambda _, idx=i: self._on_remove_queue_item(idx))
             self.tbl_queue.setCellWidget(i, 3, btn_del)
 

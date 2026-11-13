@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsPolygonItem
 )
 
+from ui.theme import STUDIO_DARK_THEME, CanvasOverlayTokens
+
 
 class BaseHandle(QGraphicsItem):
     """
@@ -74,8 +76,9 @@ class BaseHandle(QGraphicsItem):
 
 class ROIHandle(BaseHandle):
     """Square handle for resizing the standard rectangular crop box."""
-    def __init__(self, position_key: str, parent: 'ROIRectItem'):
-        super().__init__(position_key, parent, size=12.0)
+    def __init__(self, position_key: str, parent: 'ROIRectItem', tokens: Optional[CanvasOverlayTokens] = None):
+        self._tokens = tokens or STUDIO_DARK_THEME.canvas
+        super().__init__(position_key, parent, size=self._tokens.handle_size)
         self._update_cursor()
 
     def _update_cursor(self):
@@ -90,16 +93,17 @@ class ROIHandle(BaseHandle):
     def paint(self, painter: QPainter, option, widget=None):
         half = self.handle_size / 2.0
         rect = QRectF(-half, -half, self.handle_size, self.handle_size)
-        color = QColor(0, 200, 255) if self.is_hovered else QColor(0, 160, 255)
-        painter.setPen(QPen(QColor(255, 255, 255), 1.5))
-        painter.setBrush(QBrush(color))
+        rgb = self._tokens.handle_hover if self.is_hovered else self._tokens.handle_fill
+        painter.setPen(QPen(QColor(*self._tokens.handle_border), self._tokens.handle_border_width))
+        painter.setBrush(QBrush(QColor(*rgb)))
         painter.drawRect(rect)
 
 
 class PerspectivePin(BaseHandle):
     """Circular pin handle with bullseye center for precise 4-corner placement."""
-    def __init__(self, position_key: str, parent: 'PerspectiveQuadItem'):
-        super().__init__(position_key, parent, size=18.0)
+    def __init__(self, position_key: str, parent: 'PerspectiveQuadItem', tokens: Optional[CanvasOverlayTokens] = None):
+        self._tokens = tokens or STUDIO_DARK_THEME.canvas
+        super().__init__(position_key, parent, size=self._tokens.pin_size)
         self.setCursor(Qt.CrossCursor)
 
     def paint(self, painter: QPainter, option, widget=None):
@@ -108,33 +112,41 @@ class PerspectivePin(BaseHandle):
         rect = QRectF(-half, -half, self.handle_size, self.handle_size)
 
         # Outer ring
-        outer_pen = QPen(QColor(255, 255, 255), 2.0)
-        fill_color = QColor(255, 180, 0) if self.is_hovered else QColor(0, 220, 255)
+        outer_pen = QPen(QColor(*self._tokens.pin_border), self._tokens.pin_border_width)
+        fill_rgb = self._tokens.pin_hover if self.is_hovered else self._tokens.pin_fill
         painter.setPen(outer_pen)
-        painter.setBrush(QBrush(fill_color))
+        painter.setBrush(QBrush(QColor(*fill_rgb)))
         painter.drawEllipse(rect)
 
         # Inner pinpoint dot
         inner_rect = QRectF(-2.5, -2.5, 5.0, 5.0)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.setBrush(QBrush(QColor(*self._tokens.pin_border)))
         painter.drawEllipse(inner_rect)
 
 
 class ROIRectItem(QGraphicsRectItem):
     """Interactive ROI Box with move and aspect-ratio locked resize handles."""
 
-    def __init__(self, rect: QRectF, bounds: QRectF, on_change_callback: Optional[Callable] = None, aspect_ratio: Optional[float] = None):
+    def __init__(
+        self,
+        rect: QRectF,
+        bounds: QRectF,
+        on_change_callback: Optional[Callable] = None,
+        aspect_ratio: Optional[float] = None,
+        tokens: Optional[CanvasOverlayTokens] = None,
+    ):
         super().__init__(rect)
         self.bounds = bounds
         self.on_change_callback = on_change_callback
         self.aspect_ratio = aspect_ratio
+        self._tokens = tokens or STUDIO_DARK_THEME.canvas
         self.setZValue(10)
 
         # Dashed cyan line with semi-transparent fill
-        pen = QPen(QColor(0, 220, 255), 2, Qt.DashLine)
+        pen = QPen(QColor(*self._tokens.roi_stroke), self._tokens.roi_stroke_width, Qt.DashLine)
         self.setPen(pen)
-        self.setBrush(QBrush(QColor(0, 180, 255, 30)))
+        self.setBrush(QBrush(QColor(*self._tokens.roi_fill)))
 
         self.setFlags(
             QGraphicsItem.ItemIsSelectable |
@@ -145,7 +157,7 @@ class ROIRectItem(QGraphicsRectItem):
         # Create 8 handles
         self.handles: Dict[str, ROIHandle] = {}
         for key in ["tl", "tm", "tr", "mr", "br", "bm", "bl", "ml"]:
-            self.handles[key] = ROIHandle(key, self)
+            self.handles[key] = ROIHandle(key, self, tokens=self._tokens)
 
         self._active_handle: Optional[str] = None
         self._is_dragging_rect = False
@@ -348,23 +360,29 @@ class ROIRectItem(QGraphicsRectItem):
 class _TopEdgeBadge(QGraphicsItem):
     """Zoom-independent pill badge indicating the TOP (Width) edge of the perspective quad."""
 
-    def __init__(self, parent: QGraphicsItem):
+    def __init__(
+        self,
+        parent: QGraphicsItem,
+        tokens: Optional[CanvasOverlayTokens] = None,
+        font_family: str = STUDIO_DARK_THEME.typography.font_family_raw,
+    ):
         super().__init__(parent)
+        self._tokens = tokens or STUDIO_DARK_THEME.canvas
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
         self.setAcceptedMouseButtons(Qt.NoButton)
         self.setZValue(20)
         self._rect = QRectF(-18.0, -9.0, 36.0, 18.0)
-        self._font = QFont("Segoe UI", 8, QFont.Bold)
+        self._font = QFont(font_family, self._tokens.badge_font_pt, QFont.Bold)
 
     def boundingRect(self) -> QRectF:
         return self._rect
 
     def paint(self, painter: QPainter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(QColor(24, 24, 27), 1.0))
-        painter.setBrush(QBrush(QColor(245, 158, 11)))
+        painter.setPen(QPen(QColor(*self._tokens.badge_text_dark), 1.0))
+        painter.setBrush(QBrush(QColor(*self._tokens.top_edge_amber)))
         painter.drawRoundedRect(self._rect, 5.0, 5.0)
-        painter.setPen(QColor(24, 24, 27))
+        painter.setPen(QColor(*self._tokens.badge_text_dark))
         painter.setFont(self._font)
         painter.drawText(self._rect, Qt.AlignCenter, "TOP")
 
@@ -379,21 +397,24 @@ class PerspectiveQuadItem(QGraphicsPolygonItem):
         self,
         quad_points: List[QPointF],
         bounds: QRectF,
-        on_change_callback: Optional[Callable] = None
+        on_change_callback: Optional[Callable] = None,
+        tokens: Optional[CanvasOverlayTokens] = None,
+        badge_font_family: str = STUDIO_DARK_THEME.typography.font_family_raw,
     ):
         super().__init__()
         self.bounds = bounds
         self.on_change_callback = on_change_callback
+        self._tokens = tokens or STUDIO_DARK_THEME.canvas
         self.setZValue(12)
 
         # Pens for side/bottom edges (dashed cyan) and highlighted TOP edge (amber)
-        self._edge_pen = QPen(QColor(0, 220, 255), 2.0, Qt.DashLine)
+        self._edge_pen = QPen(QColor(*self._tokens.roi_stroke), self._tokens.roi_stroke_width, Qt.DashLine)
         self._edge_pen.setCosmetic(True)
-        self._top_pen = QPen(QColor(245, 158, 11), 2.5, Qt.SolidLine)
+        self._top_pen = QPen(QColor(*self._tokens.top_edge_amber), self._tokens.top_edge_width, Qt.SolidLine)
         self._top_pen.setCosmetic(True)
 
         self.setPen(self._edge_pen)
-        self.setBrush(QBrush(QColor(0, 180, 255, 35)))
+        self.setBrush(QBrush(QColor(*self._tokens.quad_fill)))
 
         self.setFlags(
             QGraphicsItem.ItemIsSelectable |
@@ -403,13 +424,13 @@ class PerspectiveQuadItem(QGraphicsPolygonItem):
 
         # 4 Corner Pins
         self.handles: Dict[str, PerspectivePin] = {
-            "tl": PerspectivePin("tl", self),
-            "tr": PerspectivePin("tr", self),
-            "br": PerspectivePin("br", self),
-            "bl": PerspectivePin("bl", self),
+            "tl": PerspectivePin("tl", self, tokens=self._tokens),
+            "tr": PerspectivePin("tr", self, tokens=self._tokens),
+            "br": PerspectivePin("br", self, tokens=self._tokens),
+            "bl": PerspectivePin("bl", self, tokens=self._tokens),
         }
 
-        self._top_badge = _TopEdgeBadge(self)
+        self._top_badge = _TopEdgeBadge(self, tokens=self._tokens, font_family=badge_font_family)
 
         self._points: Dict[str, QPointF] = {
             "tl": quad_points[0],
